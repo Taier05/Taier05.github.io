@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="使用 systemd-networkd 为 Photon OS 4 配置持久化静态路由，并通过局部 reload 与 reconfigure 降低网络中断风险。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>vCenter Photon OS 4 持久化静态路由 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-5" />
+    <script src="/assets/js/main.js?v=20260715-batch-5" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>vCenter Photon OS 4 持久化静态路由</h1>
+        <p class="article-lead">使用 systemd-networkd 为 Photon OS 4 配置持久化静态路由，并通过局部 reload 与 reconfigure 降低网络中断风险。</p>
+        <div class="article-info"><span>技术手册</span><span>约 4 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>RT</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">1. 背景与原理</a>
+          <a class="toc-level-2" href="#section-2">2. 操作步骤（推荐流程）</a>
+          <a class="toc-level-3" href="#section-3">2.1 确认 eth0 使用的 .network 配置文件</a>
+          <a class="toc-level-3" href="#section-4">2.2 备份并编辑该 .network 文件</a>
+          <a class="toc-level-3" href="#section-5">2.3 重启 networkd 并验证</a>
+          <a class="toc-level-2" href="#section-6">3. 如果系统里没有合适的 .network 文件（可选兜底）</a>
+          <a class="toc-level-2" href="#section-7">4. 排错与注意事项</a>
+          <a class="toc-level-3" href="#section-8">4.1 路由没生效，先看日志</a>
+          <a class="toc-level-3" href="#section-9">4.2 网关不在直连网段时（特殊情况）</a>
+          <a class="toc-level-3" href="#section-10">4.3 为什么不建议“开机脚本里写 ip route add”</a>
+          <a class="toc-level-2" href="#section-11">5. 完成验收</a>
+          <a class="toc-level-2" href="#section-12">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>变更提示：网络配置错误可能导致 vCenter Server Appliance 失联。修改前应确认有 VAMI、虚拟机控制台或 ESXi 带外入口，备份原 .network 文件并记录当前路由。优先使用 networkctl reload 和 networkctl reconfigure eth0 只重载目标接口，避免直接重启整个 systemd-networkd。</p></blockquote>
+<blockquote><p>适用：VMware Photon OS 4.0（基于 systemd / systemd-networkd 管理网卡） 目标：把以下两条路由<strong>持久化</strong>，重启后仍存在  - <code>&lt;VPN_CIDR_A&gt; via &lt;VPN_GATEWAY_A&gt; dev eth0</code> - <code>&lt;VPN_CIDR_B&gt; via &lt;VPN_GATEWAY_B&gt; dev eth0</code></p></blockquote>
+<hr />
+<h2 id="section-1">1. 背景与原理</h2>
+<p><code>ip route add ...</code> 这种方式只会写入<strong>运行时路由表</strong>，重启或网络服务重启后会丢失。 Photon OS 4 常见做法是把静态路由写到 <strong>systemd-networkd 的 <code>.network</code> 配置</strong>里，通过 <code>[Route]</code> 段落实现持久化。</p>
+<hr />
+<h2 id="section-2">2. 操作步骤（推荐流程）</h2>
+<h3 id="section-3">2.1 确认 eth0 使用的 <code>.network</code> 配置文件</h3>
+<p>执行：</p>
+<pre><code class="language-bash">networkctl status eth0 | sed -n &#39;s/.*Network File: //p&#39;</code></pre>
+<p>预期会得到类似结果（示例）：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>/etc/systemd/network/10-eth0.network</code></li>
+<li class="list-depth-0"><code>/etc/systemd/network/99-dhcp-en.network</code></li>
+</ul>
+<blockquote><p>这个输出的文件路径就是<strong>需要修改的配置文件</strong>。</p></blockquote>
+<p>如果没有显示 <code>Network File</code> 或找不到文件，用兜底方式搜索：</p>
+<pre><code class="language-bash">grep -Rns &quot;Name=eth0&quot; /etc/systemd/network/*.network</code></pre>
+<hr />
+<h3 id="section-4">2.2 备份并编辑该 <code>.network</code> 文件</h3>
+<p>先备份（将 <code>&lt;文件名&gt;</code> 替换为上一步查到的真实文件）：</p>
+<pre><code class="language-bash">cp -a /etc/systemd/network/&lt;文件名&gt; /etc/systemd/network/&lt;文件名&gt;.bak</code></pre>
+<p>编辑文件：</p>
+<pre><code class="language-bash">vi /etc/systemd/network/&lt;文件名&gt;</code></pre>
+<p>在文件末尾追加以下两段（<strong>两段 <code>[Route]</code> 要分开写</strong>）：</p>
+<pre><code class="language-ini">[Route]
+Destination=&lt;VPN_CIDR_A&gt;
+Gateway=&lt;VPN_GATEWAY_A&gt;
+
+[Route]
+Destination=&lt;VPN_CIDR_B&gt;
+Gateway=&lt;VPN_GATEWAY_B&gt;</code></pre>
+<blockquote><p>注意：不要破坏原来的 <code>[Match] / [Network] / [DHCP]</code> 等段落，只需要追加 <code>[Route]</code>。</p></blockquote>
+<hr />
+<h3 id="section-5">2.3 重启 networkd 并验证</h3>
+<p>使配置生效：</p>
+<pre><code class="language-bash">networkctl reload
+networkctl reconfigure eth0</code></pre>
+<p>验证路由是否存在：</p>
+<pre><code class="language-bash">ip route | egrep &#39;&lt;VPN_CIDR_A&gt;|&lt;VPN_CIDR_B&gt;&#39;</code></pre>
+<hr />
+<h2 id="section-6">3. 如果系统里没有合适的 <code>.network</code> 文件（可选兜底）</h2>
+<p>当 <code>/etc/systemd/network/</code> 下没有匹配 eth0 的配置文件时，可以新建一个（常见 DHCP 场景）：</p>
+<pre><code class="language-bash">cat &gt;/etc/systemd/network/10-eth0.network &lt;&lt;&#39;EOF&#39;
+[Match]
+Name=eth0
+
+[Network]
+DHCP=yes
+
+[Route]
+Destination=&lt;VPN_CIDR_A&gt;
+Gateway=&lt;VPN_GATEWAY_A&gt;
+
+[Route]
+Destination=&lt;VPN_CIDR_B&gt;
+Gateway=&lt;VPN_GATEWAY_B&gt;
+EOF
+
+networkctl reload
+networkctl reconfigure eth0
+ip route | egrep &#39;&lt;VPN_CIDR_A&gt;|&lt;VPN_CIDR_B&gt;&#39;</code></pre>
+<hr />
+<h2 id="section-7">4. 排错与注意事项</h2>
+<h3 id="section-8">4.1 路由没生效，先看日志</h3>
+<pre><code class="language-bash">journalctl -u systemd-networkd -b --no-pager | tail -n 200
+networkctl status eth0</code></pre>
+<h3 id="section-9">4.2 网关不在直连网段时（特殊情况）</h3>
+<p>如果 <code>Gateway</code> 不在 eth0 的直连网段，可能需要在对应 <code>[Route]</code> 段里增加：</p>
+<pre><code class="language-ini">GatewayOnLink=yes</code></pre>
+<blockquote><p>若网关位于 <code>&lt;MANAGEMENT_CIDR&gt;</code> 直连网段内，通常不需要该参数。</p></blockquote>
+<h3 id="section-10">4.3 为什么不建议“开机脚本里写 ip route add”</h3>
+<ul class="article-list">
+<li class="list-depth-0">可能出现网络没起来就执行，导致命令失败；</li>
+<li class="list-depth-0">部分 appliance 会在开机后重写网络配置；</li>
+<li class="list-depth-0"><code>.network</code> 配置方式更标准、更稳定。</li>
+</ul>
+<hr />
+<h2 id="section-11">5. 完成验收</h2>
+<p>``<code>bash ip route | egrep &#39;&lt;VPN_CIDR_A&gt;|&lt;VPN_CIDR_B&gt;&#39; </code>`` 仍能看到两条路由，即持久化成功。</p>
+<ul class="article-list">
+<li class="list-depth-0">重启网络服务或重启系统后，执行：</li>
+</ul>
+<h2 id="section-12">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://vmware.github.io/photon/docs-v4/administration-guide/managing-network-configuration/setting-a-static-ip-address/" target="_blank" rel="noreferrer">Photon OS 4 静态网络配置</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

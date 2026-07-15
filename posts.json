@@ -1,5 +1,35 @@
 [
   {
+    "title": "OpenVPN 多场景部署与安全运维手册",
+    "slug": "openvpn-multi-scenario-operations",
+    "category": "平台运维",
+    "summary": "覆盖内网互通、统一出口、多 VPC 路由、客户端冲突规避、认证安全与日常故障排查。",
+    "tags": [
+      "OpenVPN",
+      "网络"
+    ]
+  },
+  {
+    "title": "vCenter Photon OS 4 持久化静态路由",
+    "slug": "vcenter-photon-static-routes",
+    "category": "平台运维",
+    "summary": "使用 systemd-networkd 为 Photon OS 4 配置持久化静态路由，并通过局部 reload 与 reconfigure 降低网络中断风险。",
+    "tags": [
+      "vCenter",
+      "路由"
+    ]
+  },
+  {
+    "title": "vSphere vDS 与静态 EtherChannel 配置手册",
+    "slug": "vsphere-vds-static-etherchannel",
+    "category": "平台运维",
+    "summary": "梳理 vDS、静态 Port-Channel 与 IP Hash 的一致性要求，以及管理网络和 vCenter 虚拟机的安全迁移顺序。",
+    "tags": [
+      "vDS",
+      "EtherChannel"
+    ]
+  },
+  {
     "title": "Gitea 部署、发布与仓库迁移手册",
     "slug": "gitea-deployment-migration",
     "category": "平台运维",

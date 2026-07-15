@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="梳理 vDS、静态 Port-Channel 与 IP Hash 的一致性要求，以及管理网络和 vCenter 虚拟机的安全迁移顺序。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>vSphere vDS 与静态 EtherChannel 配置手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-5" />
+    <script src="/assets/js/main.js?v=20260715-batch-5" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>vSphere vDS 与静态 EtherChannel 配置手册</h1>
+        <p class="article-lead">梳理 vDS、静态 Port-Channel 与 IP Hash 的一致性要求，以及管理网络和 vCenter 虚拟机的安全迁移顺序。</p>
+        <div class="article-info"><span>技术手册</span><span>约 9 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>vDS</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">1. 背景与关键原则</a>
+          <a class="toc-level-2" href="#section-2">2. 变更前准备（强烈建议先做）</a>
+          <a class="toc-level-3" href="#section-3">2.1 网络规划（建议写清楚）</a>
+          <a class="toc-level-3" href="#section-4">2.2 变更保护（回退手段）</a>
+          <a class="toc-level-2" href="#section-5">3. vCenter 上创建 vDS（vDS-Production）</a>
+          <a class="toc-level-2" href="#section-6">4. 创建分布式端口组（dvPortgroup）</a>
+          <a class="toc-level-3" href="#section-7">4.1 端口组通用设置（与初稿一致，但补充注意点）</a>
+          <a class="toc-level-2" href="#section-8">5. 批量加入“非 vCenter 所在主机”到 vDS（推荐顺序：先交换机后 vCenter）</a>
+          <a class="toc-level-3" href="#section-9">5.1 交换机侧（先做）</a>
+          <a class="toc-level-3" href="#section-10">5.2 vCenter 侧：添加与管理主机</a>
+          <a class="toc-level-2" href="#section-11">6. vCenter 所在 ESXi 主机（关键安全流程）</a>
+          <a class="toc-level-3" href="#section-12">6.1 启用 vMotion（两台主机都要）</a>
+          <a class="toc-level-3" href="#section-13">6.2 迁移 vCenter 虚拟机（计算 + 存储一起迁移）</a>
+          <a class="toc-level-3" href="#section-14">6.3 为什么“主机+存储迁移”也能不中断？（简述原理）</a>
+          <a class="toc-level-3" href="#section-15">6.4 现在再处理 esxi-vcenter-host.example.internal 的 vDS + LAG</a>
+          <a class="toc-level-2" href="#section-16">7. 验证清单（做完必须逐项过一遍）</a>
+          <a class="toc-level-3" href="#section-17">7.1 vCenter / vDS 侧</a>
+          <a class="toc-level-3" href="#section-18">7.2 ESXi 主机侧（命令验证）</a>
+          <a class="toc-level-3" href="#section-19">7.3 故障演练（推荐做）</a>
+          <a class="toc-level-2" href="#section-20">8. 常见问题与排查</a>
+          <a class="toc-level-3" href="#section-21">8.1 vDS “不同步”/主机配置下发异常</a>
+          <a class="toc-level-3" href="#section-22">8.2 无法从 vDS 移除主机：提示端口仍被 vmk0 占用</a>
+          <a class="toc-level-3" href="#section-23">8.3 最后手段：新建 vDS 迁移</a>
+          <a class="toc-level-2" href="#section-24">9. 变更记录模板</a>
+          <a class="toc-level-3" href="#section-25">附：关键配置原则</a>
+          <a class="toc-level-2" href="#section-26">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>中断风险提示：静态 EtherChannel 要求交换机端口与 vDS/dvPortgroup 的 Route based on IP hash 完全匹配。不要把静态 Port-Channel 与 vDS 的动态 LACP LAG 混用。迁移管理 VMkernel 前必须准备 DCUI 或带外入口、保留可回退的 vSS 管理路径，并一次只处理一台非 vCenter 所在主机。</p></blockquote>
+<blockquote><p>适用场景：交换机侧使用<strong>静态 LAG</strong>（手动配置 Port-Channel，不跑 LACP），ESXi 8.0.2，vCenter 8.0.3。 目标：把多台 ESXi 通过 vDS 统一接入，并用两口网卡做链路汇聚；同时<strong>安全处理 vCenter 所在的 ESXi 主机</strong>，避免“迁移管理网导致 vCenter/主机失联”。</p></blockquote>
+<hr />
+<h2 id="section-1">1. 背景与关键原则</h2>
+<p><strong>vDS 端口组使用 IP Hash 时，交换机侧必须把对应的物理端口加入同一个 Port-Channel（静态 on 或等效模式），并且两条上行都应处于 Active。</strong> 只要任意一侧不匹配（比如交换机没聚合、或端口组不是 IP Hash），就可能出现丢包/主机失联。</p>
+<ul class="article-list">
+<li class="list-depth-0">本文采用的设计是：每台 ESXi 两个物理口（例如 vmnic0/vmnic1）做 <strong>静态 LAG</strong>，在 vDS/端口组侧使用 <strong>“基于 IP 哈希的路由（Route based on IP hash）”</strong>。</li>
+<li class="list-depth-0"><strong>关键原则（非常重要）</strong>：</li>
+</ul>
+<hr />
+<h2 id="section-2">2. 变更前准备（强烈建议先做）</h2>
+<h3 id="section-3">2.1 网络规划（建议写清楚）</h3>
+<div class="table-wrap"><table><thead><tr>
+<th>项目</th>
+<th>建议</th>
+</tr></thead><tbody>
+<tr>
+<td>管理网络（MGMT）</td>
+<td>VLAN/网段、网关、DNS、NTP（确保一致）</td>
+</tr>
+<tr>
+<td>VM 业务网络（VM）</td>
+<td>VLAN/网段、是否需要 Trunk、是否有多 VLAN</td>
+</tr>
+<tr>
+<td>vMotion 网络（可选但推荐独立）</td>
+<td>建议单独 VMkernel（vmk1）+ 独立 VLAN/网段，避免占用管理网</td>
+</tr>
+<tr>
+<td>存储网络（如 iSCSI/NFS/vSAN）</td>
+<td>MTU、VLAN、带宽规划（若要做“主机+存储一起迁移”，更要保证链路质量）</td>
+</tr>
+</tbody></table></div>
+<blockquote><p>为快速迁移，直接在 vmk0 勾选 vMotion 也可用；生产环境建议使用独立 VMkernel 接口，边界更清晰、策略更易控制。</p></blockquote>
+<h3 id="section-4">2.2 变更保护（回退手段）</h3>
+<ul class="article-list">
+<li class="list-depth-0">确认具备 <strong>ESXi 控制台/DCUI</strong> 或带外管理（iDRAC/iLO/IPMI），以便网络断了还能救回。</li>
+<li class="list-depth-0">每台 ESXi 建议保留/准备一个 <strong>标准 vSwitch（vSS）临时管理口方案</strong>（后面处理“vDS 端口占用无法移除”会用到）。</li>
+<li class="list-depth-0">建议在动 vCenter 所在主机前：<strong>先完成其他主机的汇聚</strong>，并选一台作为 vCenter 迁移目标主机。</li>
+</ul>
+<hr />
+<h2 id="section-5">3. vCenter 上创建 vDS（vDS-Production）</h2>
+<ol class="article-list">
+<li class="list-depth-0">vCenter → <strong>网络</strong> → 新建 <strong>分布式交换机 vDS</strong></li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-0">名称：<code>vDS-Production</code></li>
+<li class="list-depth-0">版本：8.0.0（按环境选择）</li>
+<li class="list-depth-0">上行链路数：2</li>
+<li class="list-depth-0">默认端口组：不创建（取消勾选），后面手动建更可控</li>
+</ul>
+<blockquote><p>交换机侧与 vSphere 侧必须采用一致的静态聚合模式。</p></blockquote>
+<hr />
+<h2 id="section-6">4. 创建分布式端口组（dvPortgroup）</h2>
+<p>建议至少两个：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>PG-MGMT</code>：给 VMkernel（管理口 vmk0）用</li>
+<li class="list-depth-0"><code>PG-VM</code>：给虚拟机业务网络用</li>
+</ul>
+<blockquote><p>可选增强：再建 <code>PG-vMotion</code>（给 vmk1）、<code>PG-Storage</code> 等，按实际网络规划。</p></blockquote>
+<h3 id="section-7">4.1 端口组通用设置（与初稿一致，但补充注意点）</h3>
+<p>在 <strong>绑定和故障切换（Teaming and failover）</strong>：</p>
+<ul class="article-list">
+<li class="list-depth-0">负载均衡：<strong>基于 IP 哈希的路由（IP Hash）</strong></li>
+<li class="list-depth-0">网络故障检测：仅链路状态</li>
+<li class="list-depth-0">上行链路：两条都 Active（不做 Standby）</li>
+</ul>
+<p><strong>补充建议：</strong></p>
+<ul class="article-list">
+<li class="list-depth-0">VLAN：务必在端口组里设置正确（Access VLAN 就填 VLAN ID；Trunk 就用 VLAN Trunking 范围）。</li>
+<li class="list-depth-0">MTU：如果 vMotion/存储网络需要巨帧，确保 vDS、dvPortgroup、交换机 Port-Channel 全链路 MTU 一致。</li>
+</ul>
+<hr />
+<h2 id="section-8">5. 批量加入“非 vCenter 所在主机”到 vDS（推荐顺序：先交换机后 vCenter）</h2>
+<blockquote><p>为降低网络中断风险，建议先完成交换机端口聚合，再在 vCenter 中添加主机并迁移网络： <strong>先在交换机配置 Port-Channel → 再在 vCenter 迁移网卡/VMkernel/虚拟机网络。</strong></p></blockquote>
+<p>对每台非 vCenter 所在主机（示例：esxi-host-a.example.internal）：</p>
+<h3 id="section-9">5.1 交换机侧（先做）</h3>
+<ul class="article-list">
+<li class="list-depth-0">把 ESXi 的两口物理线对应的交换机端口加入同一个 <strong>Port-Channel</strong>（静态 on）</li>
+<li class="list-depth-0">配置为 trunk/允许 VLAN（至少包含 MGMT、VM 等所需 VLAN）</li>
+<li class="list-depth-0">建议开启边缘端口（PortFast edge trunk）/关闭不必要的保护策略（按交换机型号和组织规范配置）</li>
+</ul>
+<h3 id="section-10">5.2 vCenter 侧：添加与管理主机</h3>
+<p>右键 <code>vDS-Production</code> → <strong>添加和管理主机</strong> → 添加主机：</p>
+<ol class="article-list">
+<li class="list-depth-0">选择 ESXi 主机（如 esxi-host-a.example.internal）</li>
+<li class="list-depth-0"><strong>管理物理适配器</strong>：</li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1">vmnic0 → 上行链路1</li>
+<li class="list-depth-1">vmnic1 → 上行链路2</li>
+</ul>
+<ol class="article-list">
+<li class="list-depth-0"><strong>管理 VMkernel 适配器</strong>：</li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1">把 vmk0 迁移到 <code>PG-MGMT</code></li>
+</ul>
+<ol class="article-list">
+<li class="list-depth-0"><strong>迁移虚拟机网络</strong>：</li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1">把虚拟机网络迁移到 <code>PG-VM</code>（没虚拟机可跳过）</li>
+</ul>
+<ol class="article-list">
+<li class="list-depth-0">完成后验证：</li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1">vCenter 能否正常管理该主机</li>
+<li class="list-depth-1">ESXi Web（<code>https://&lt;ESXI_HOST&gt;</code>）是否可达</li>
+<li class="list-depth-1">虚拟机业务是否正常</li>
+</ul>
+<blockquote><p>按此流程重复，直到只剩 vCenter 所在 ESXi 主机未加入。</p></blockquote>
+<hr />
+<h2 id="section-11">6. vCenter 所在 ESXi 主机（关键安全流程）</h2>
+<p><strong>vCenter 所在主机应最后处理</strong>，并先迁移 vCenter VM，避免迁移管理网络时失去控制入口。</p>
+<p>假设：vCenter 所在 ESXi 主机是 <code>esxi-vcenter-host.example.internal</code>，目标迁移主机是 <code>esxi-target-host.example.internal</code>。</p>
+<h3 id="section-12">6.1 启用 vMotion（两台主机都要）</h3>
+<ul class="article-list">
+<li class="list-depth-0">在两台 ESXi 上编辑用于迁移的 VMkernel 接口（示例为 vmk0）→ 勾选 <strong>vMotion</strong> 服务</li>
+</ul>
+<blockquote><p>生产环境更推荐新建 vmk1 专用于 vMotion；临时复用 vmk0 也可完成在线迁移，但应评估管理流量与迁移流量相互影响。</p></blockquote>
+<h3 id="section-13">6.2 迁移 vCenter 虚拟机（计算 + 存储一起迁移）</h3>
+<p>在 vCenter 里选中 vCenter 这台 VM：</p>
+<ul class="article-list">
+<li class="list-depth-0">迁移 → 选择类型：<strong>更改计算资源和存储</strong></li>
+<li class="list-depth-0">计算资源：选择目标主机 <code>esxi-target-host.example.internal</code></li>
+<li class="list-depth-0">存储：选择目标存储</li>
+<li class="list-depth-0">网络：选择目标网络 <code>PG-VM</code>（按实际环境选择）</li>
+<li class="list-depth-0">vMotion 优先级：默认即可</li>
+<li class="list-depth-0">开始迁移</li>
+</ul>
+<p><strong>验证建议：</strong></p>
+<ul class="article-list">
+<li class="list-depth-0">全程持续执行 <code>ping</code>，观察迁移期间是否丢包</li>
+<li class="list-depth-0">迁移完成后登录 vCenter UI 确认服务正常</li>
+</ul>
+<h3 id="section-14">6.3 为什么“主机+存储迁移”也能不中断？（简述原理）</h3>
+<ul class="article-list">
+<li class="list-depth-0"><strong>vMotion</strong>：先在目标主机预创建 VM，内存采用“预拷贝（pre-copy）”反复同步；最后短暂切换执行点（switchover），切换窗口通常很小，但仍应通过业务探测确认实际影响。</li>
+<li class="list-depth-0"><strong>Storage vMotion</strong>：存储数据后台搬迁，同时保持写入一致性；与 vMotion 组合后，可以同时迁移计算资源和存储。</li>
+</ul>
+<h3 id="section-15">6.4 现在再处理 esxi-vcenter-host.example.internal 的 vDS + LAG</h3>
+<ul class="article-list">
+<li class="list-depth-0">按第 5 节的“先交换机聚合 → 再 vCenter 添加/迁移”流程，把 esxi-vcenter-host.example.internal 加入 vDS 并完成汇聚。</li>
+</ul>
+<hr />
+<h2 id="section-16">7. 验证清单（做完必须逐项过一遍）</h2>
+<h3 id="section-17">7.1 vCenter / vDS 侧</h3>
+<ul class="article-list">
+<li class="list-depth-0">vDS → Hosts：所有主机状态正常、未出现不同步/告警</li>
+<li class="list-depth-0">dvPortgroup：IP Hash 生效、两条 uplink Active</li>
+<li class="list-depth-0">健康检查（可选）：vDS 健康检查 / VLAN/MTU</li>
+</ul>
+<h3 id="section-18">7.2 ESXi 主机侧（命令验证）</h3>
+<p>在 ESXi Shell：</p>
+<ul class="article-list">
+<li class="list-depth-0">查看物理网卡：<code>esxcli network nic list</code></li>
+<li class="list-depth-0">查看 VMkernel：<code>esxcli network ip interface list</code></li>
+<li class="list-depth-0">查看到网关连通：<code>vmkping &lt;网关IP&gt;</code></li>
+<li class="list-depth-0">vMotion 互通（如果单独网段/MTU）：<code>vmkping -I vmkX -d -s 8972 &lt;对端IP&gt;</code>（按 MTU 调整）</li>
+</ul>
+<h3 id="section-19">7.3 故障演练（推荐做）</h3>
+<ul class="article-list">
+<li class="list-depth-0">临时拔掉一根上行线/Down 一个交换机端口：</li>
+<li class="list-depth-1">管理是否还能访问？</li>
+<li class="list-depth-1">虚拟机业务是否正常？</li>
+<li class="list-depth-1">观察 vDS uplink failover 状态</li>
+</ul>
+<hr />
+<h2 id="section-20">8. 常见问题与排查</h2>
+<h3 id="section-21">8.1 vDS “不同步”/主机配置下发异常</h3>
+<p>常见思路：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认主机在 vCenter 中是 Connected 状态</li>
+<li class="list-depth-0">重启 ESXi 侧管理代理（谨慎操作，业务低峰）：重启 hostd/vpxa（仅在需要时）</li>
+<li class="list-depth-0">检查 vDS uplink/端口组配置是否与交换机聚合匹配（尤其是 IP Hash + Port-Channel）</li>
+</ul>
+<h3 id="section-22">8.2 无法从 vDS 移除主机：提示端口仍被 vmk0 占用</h3>
+<p>典型报错类似：某 dvPort “仍在已连接到 … nic=vmk0 …” 含义：<strong>vmk0 仍绑定在 vDS 的 dvPort 上，因此 vCenter 不允许移除主机。</strong></p>
+<p>处理思路（安全做法）：</p>
+<ol class="article-list">
+<li class="list-depth-0">在该 ESXi 上准备一个临时 <strong>标准 vSwitch（vSS）+ PortGroup（同 VLAN）</strong></li>
+<li class="list-depth-0">把 vmk0 从 dvPortgroup 迁移回 vSS 的 PortGroup（在 vCenter 的“添加和管理主机 → 管理 VMkernel 适配器”里操作）</li>
+<li class="list-depth-0">确认管理网恢复、主机可达后，再从 vDS 移除主机/清理端口占用</li>
+</ol>
+<blockquote><p>若常规迁移路径受阻，可新建临时 vDS 承接网络，再从旧 vDS 中移除主机；操作前必须确认回滚入口。</p></blockquote>
+<h3 id="section-23">8.3 最后手段：新建 vDS 迁移</h3>
+<p>如果某个 vDS 已绑定多主机且状态异常、迁移/移除卡死：</p>
+<ul class="article-list">
+<li class="list-depth-0">可以新建一个 vDS，把主机逐台迁移过去；</li>
+<li class="list-depth-0">待旧 vDS 上所有主机迁走后，再清理旧 vDS。</li>
+</ul>
+<hr />
+<h2 id="section-24">9. 变更记录模板</h2>
+<ul class="article-list">
+<li class="list-depth-0">每台主机的 Port-Channel 编号、交换机端口号、允许 VLAN 列表</li>
+<li class="list-depth-0">vDS/dvPortgroup 的 VLAN、MTU、Teaming 策略</li>
+<li class="list-depth-0">vCenter VM 迁移时间点、迁移目标主机/存储</li>
+</ul>
+<hr />
+<h3 id="section-25">附：关键配置原则</h3>
+<ul class="article-list">
+<li class="list-depth-0">静态 LAG、ESXi 8.0.2、vCenter 8.0.3</li>
+<li class="list-depth-0">vDS：vDS-Production，上行 2，不建默认端口组</li>
+<li class="list-depth-0">dvPortgroup：PG-MGMT / PG-VM，IP Hash，链路状态检测，两 uplink Active</li>
+<li class="list-depth-0">先处理非 vCenter 主机，vCenter 所在主机最后；先把 vCenter VM 迁走再做汇聚</li>
+</ul>
+<h2 id="section-26">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://knowledge.broadcom.com/external/article/321425" target="_blank" rel="noreferrer">Broadcom EtherChannel 与 IP Hash 配置说明</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

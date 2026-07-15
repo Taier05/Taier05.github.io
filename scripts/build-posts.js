@@ -6,9 +6,30 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260715-batch-4';
+const assetVersion = '20260715-batch-5';
 
 const posts = [
+  {
+    sourceTitle: 'OpenVPN 多场景部署与运维手册',
+    title: 'OpenVPN 多场景部署与安全运维手册',
+    slug: 'openvpn-multi-scenario-operations', category: '平台运维', symbol: 'VPN',
+    summary: '覆盖内网互通、统一出口、多 VPC 路由、客户端冲突规避、认证安全与日常故障排查。',
+    tags: ['OpenVPN', '网络']
+  },
+  {
+    sourceTitle: 'vCenter (Photon OS 4) 持久化静态路由配置方法',
+    title: 'vCenter Photon OS 4 持久化静态路由',
+    slug: 'vcenter-photon-static-routes', category: '平台运维', symbol: 'RT',
+    summary: '使用 systemd-networkd 为 Photon OS 4 配置持久化静态路由，并通过局部 reload 与 reconfigure 降低网络中断风险。',
+    tags: ['vCenter', '路由']
+  },
+  {
+    sourceTitle: 'vCenter + ESXi 分布式交换机（vDS）+ 静态 LAG（Port-Channel/EtherChannel）配置笔记（优化版）',
+    title: 'vSphere vDS 与静态 EtherChannel 配置手册',
+    slug: 'vsphere-vds-static-etherchannel', category: '平台运维', symbol: 'vDS',
+    summary: '梳理 vDS、静态 Port-Channel 与 IP Hash 的一致性要求，以及管理网络和 vCenter 虚拟机的安全迁移顺序。',
+    tags: ['vDS', 'EtherChannel']
+  },
   {
     sourceTitle: 'Gitea部署与迁移配置手册',
     title: 'Gitea 部署、发布与仓库迁移手册',
@@ -269,6 +290,16 @@ function renderMarkdown(markdown) {
       const text = heading[2].replace(/`/g, '');
       headings.push({ level, id, text });
       output.push(`<h${level} id="${id}">${inlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const image = line.match(/^!\[([^\]]*)\]\((\/assets\/[A-Za-z0-9_./-]+\.(?:png|jpe?g|webp|gif))(?:\s+"([^"]*)")?\)$/i);
+    if (image) {
+      flushParagraph(); flushList();
+      const alt = escapeHtml(image[1]);
+      const src = escapeHtml(image[2]);
+      const caption = image[3] ? `<figcaption>${escapeHtml(image[3])}</figcaption>` : '';
+      output.push(`<figure class="article-figure"><img src="${src}" alt="${alt}" loading="lazy" decoding="async" />${caption}</figure>`);
       continue;
     }
 
