@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#f4f1e8" />
     <title>Yalex 的技术笔记</title>
-    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-list" />
-    <script src="/assets/js/main.js?v=20260715-list" defer></script>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-pagination" />
+    <script src="/assets/js/main.js?v=20260715-pagination" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到正文</a>
@@ -92,7 +92,7 @@
             <button class="filter-button" type="button" data-filter="工具方法" aria-pressed="false">工具方法 <span>1</span></button>
           </div>
           <div class="notes-status">
-            <span>显示 <strong id="notes-result-count">15</strong> 篇笔记</span>
+            <span>找到 <strong id="notes-result-count">15</strong> 篇笔记</span>
             <button id="clear-note-filters" type="button" hidden>清除筛选</button>
           </div>
         </div>
@@ -300,6 +300,24 @@
           <strong>没有找到相关笔记</strong>
           <p>换一个关键词，或者清除当前筛选条件。</p>
         </div>
+        <nav class="notes-pagination" id="notes-pagination" aria-label="笔记分页">
+          <label class="page-size-control" for="notes-page-size">
+            <span>每页</span>
+            <select id="notes-page-size">
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="all">全部</option>
+            </select>
+            <span>篇</span>
+          </label>
+          <span class="page-range" id="notes-page-range">1–15 / 15</span>
+          <div class="page-controls" id="notes-page-controls" hidden>
+            <button class="page-nav" id="notes-prev-page" type="button" aria-label="上一页">←</button>
+            <div class="page-numbers" id="notes-page-numbers" aria-label="页码"></div>
+            <button class="page-nav" id="notes-next-page" type="button" aria-label="下一页">→</button>
+          </div>
+        </nav>
       </section>
 
       <section class="topics-section" id="topics">
