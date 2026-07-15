@@ -1,5 +1,55 @@
 [
   {
+    "title": "日志链路压测与瓶颈定位操作手册",
+    "slug": "log-pipeline-load-testing",
+    "category": "可观测性",
+    "summary": "使用可控日志生成器逐级提升流量，并结合 Kafka Lag、Logstash PQ 和 Elasticsearch 写入指标定位持续吞吐瓶颈。",
+    "tags": [
+      "日志链路",
+      "压测"
+    ]
+  },
+  {
+    "title": "Categraf 无法采集 Ceph Metrics：503 故障复盘",
+    "slug": "categraf-ceph-metrics-503",
+    "category": "可观测性",
+    "summary": "从采集端 503 追踪到 Ceph mgr Prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。",
+    "tags": [
+      "Categraf",
+      "Ceph"
+    ]
+  },
+  {
+    "title": "Redis AOF 损坏导致启动失败的修复与验证",
+    "slug": "redis-aof-corruption-recovery",
+    "category": "Redis",
+    "summary": "通过日志和 redis-check-aof 确认多段 AOF 损坏，完成备份、风险评估、修复及持久化状态验证。",
+    "tags": [
+      "AOF",
+      "故障恢复"
+    ]
+  },
+  {
+    "title": "vCenter Web 控制台 Missing JWT 故障排查",
+    "slug": "vcenter-web-console-missing-jwt",
+    "category": "平台运维",
+    "summary": "沿着 HVC、vpxd-svcs、内部 SSL 和 Machine SSL 证书链，定位 Web 控制台与授权同步同时失败的根因。",
+    "tags": [
+      "vCenter",
+      "证书"
+    ]
+  },
+  {
+    "title": "vCenter UI 故障：服务依赖与 PostgreSQL 损坏修复复盘",
+    "slug": "vcenter-ui-vpxd-postgresql-recovery",
+    "category": "平台运维",
+    "summary": "复盘 vCenter 服务依赖链未完整启动与 PostgreSQL 统计信息损坏叠加导致的 UI 故障，并明确高风险数据库操作边界。",
+    "tags": [
+      "vCenter",
+      "PostgreSQL"
+    ]
+  },
+  {
     "title": "Kubernetes 1.34 高可用集群与 Calico 部署手册",
     "slug": "kubernetes-1-34-ha-calico",
     "category": "Kubernetes",

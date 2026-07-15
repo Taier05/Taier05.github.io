@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="通过日志和 redis-check-aof 确认多段 AOF 损坏，完成备份、风险评估、修复及持久化状态验证。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Redis AOF 损坏导致启动失败的修复与验证 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-2" />
+    <script src="/assets/js/main.js?v=20260715-batch-2" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Redis</p>
+        <h1>Redis AOF 损坏导致启动失败的修复与验证</h1>
+        <p class="article-lead">通过日志和 redis-check-aof 确认多段 AOF 损坏，完成备份、风险评估、修复及持久化状态验证。</p>
+        <div class="article-info"><span>技术手册</span><span>约 4 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>REDIS</span><strong>AOF</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">适用场景</a>
+          <a class="toc-level-2" href="#section-2">典型现象</a>
+          <a class="toc-level-2" href="#section-3">确认 AOF 损坏</a>
+          <a class="toc-level-2" href="#section-4">修复步骤</a>
+          <a class="toc-level-2" href="#section-5">启动后验证</a>
+          <a class="toc-level-2" href="#section-6">本次故障结论</a>
+          <a class="toc-level-2" href="#section-7">官方参考</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">适用场景</h2>
+<p>Redis 启动命令类似：</p>
+<pre><code class="language-bash">/opt/redis/src/redis-server /opt/redis/redis.conf</code></pre>
+<p>启动后进程不存在、端口未监听，日志中出现 AOF 相关错误。</p>
+<h2 id="section-2">典型现象</h2>
+<p>检查进程：</p>
+<pre><code class="language-bash">ps -ef | grep redis | grep 6379 | grep -v grep</code></pre>
+<p>检查端口：</p>
+<pre><code class="language-bash">ss -lntp | grep &#39;:6379&#39;</code></pre>
+<p>查看 Redis 日志：</p>
+<pre><code class="language-bash">tail -n 100 /opt/redis/data/redis.log</code></pre>
+<p>典型报错：</p>
+<pre><code class="language-text">Bad file format reading the append only file appendonly.aof.xxx.incr.aof:
+make a backup of your AOF file, then use ./redis-check-aof --fix &lt;filename.manifest&gt;</code></pre>
+<p>说明 Redis 启动时加载 AOF 文件失败。</p>
+<h2 id="section-3">确认 AOF 损坏</h2>
+<p>查看配置：</p>
+<pre><code class="language-bash">grep -nE &#39;^(appendonly|appendfilename|dir|logfile|port|pidfile)&#39; /opt/redis/redis.conf</code></pre>
+<p>一般 AOF 文件目录：</p>
+<pre><code class="language-bash">/opt/redis/data/appendonlydir/</code></pre>
+<p>执行只读校验：</p>
+<pre><code class="language-bash">/opt/redis/src/redis-check-aof \
+/opt/redis/data/appendonlydir/appendonly.aof.manifest</code></pre>
+<p>如果看到类似输出，即可确认 AOF 损坏：</p>
+<pre><code class="language-text">AOF appendonly.aof.xxx.incr.aof format error
+AOF analyzed: size=xxx, ok_up_to=xxx, diff=xxx</code></pre>
+<h2 id="section-4">修复步骤</h2>
+<p>先备份当前 AOF 目录：</p>
+<pre><code class="language-bash">cp -a /opt/redis/data/appendonlydir \
+/opt/redis/data/appendonlydir.bak.$(date +%Y%m%d%H%M%S)</code></pre>
+<blockquote><p><strong>高风险操作</strong>：先保留 AOF 目录的独立副本，并确认可接受数据回退范围。Redis 官方说明：如果损坏不只发生在文件尾部，<code>--fix</code> 可能丢弃从首个损坏位置到文件末尾的全部内容。建议先在副本上检查差异，再决定是否修复原文件。</p></blockquote>
+<p>执行修复：</p>
+<pre><code class="language-bash">/opt/redis/src/redis-check-aof --fix \
+/opt/redis/data/appendonlydir/appendonly.aof.manifest</code></pre>
+<p>注意：<code>--fix</code> 的丢失范围取决于首个损坏位置；如果损坏发生在文件中部，后续大量有效写入也可能被丢弃。必须先检查报告偏移和备份副本。</p>
+<p>如存在残留 pid 文件，确认进程不存在后再清理：</p>
+<pre><code class="language-bash">cat /var/run/redis_6379.pid
+ps -p $(cat /var/run/redis_6379.pid)
+rm -f /var/run/redis_6379.pid</code></pre>
+<p>启动 Redis：</p>
+<pre><code class="language-bash">/opt/redis/src/redis-server \
+/opt/redis/redis.conf</code></pre>
+<h2 id="section-5">启动后验证</h2>
+<p>检查进程：</p>
+<pre><code class="language-bash">ps -ef | grep &#39;/opt/redis/src/redis-server&#39; | grep -v grep</code></pre>
+<p>检查端口：</p>
+<pre><code class="language-bash">ss -lntp | grep &#39;:6379&#39;</code></pre>
+<p>查看日志：</p>
+<pre><code class="language-bash">tail -n 80 /opt/redis/data/redis.log</code></pre>
+<p>正常日志应包含：</p>
+<pre><code class="language-text">DB loaded from append only file
+Ready to accept connections tcp</code></pre>
+<p>验证 Redis 响应：</p>
+<pre><code class="language-bash">REDISCLI_AUTH=&quot;$(awk &#39;$1==&quot;requirepass&quot; {print $2}&#39; /opt/redis/redis.conf)&quot; \
+/opt/redis/src/redis-cli -h &lt;IP_ADDRESS&gt; -p 6379 PING</code></pre>
+<p>正常返回：</p>
+<pre><code class="language-text">PONG</code></pre>
+<p>检查持久化状态：</p>
+<pre><code class="language-bash">REDISCLI_AUTH=&quot;$(awk &#39;$1==&quot;requirepass&quot; {print $2}&#39; /opt/redis/redis.conf)&quot; \
+/opt/redis/src/redis-cli -h &lt;IP_ADDRESS&gt; -p 6379 INFO persistence | \
+grep -E &#39;^(loading|rdb_last_bgsave_status|aof_enabled|aof_last_bgrewrite_status|aof_last_write_status):&#39;</code></pre>
+<p>正常结果应类似：</p>
+<pre><code class="language-text">loading:0
+rdb_last_bgsave_status:ok
+aof_enabled:1
+aof_last_bgrewrite_status:ok
+aof_last_write_status:ok</code></pre>
+<h2 id="section-6">本次故障结论</h2>
+<p>本次 <code>6379</code> 启动失败的原因是：</p>
+<pre><code class="language-text">appendonly.aof.&lt;SEQUENCE&gt;.incr.aof 文件尾部损坏</code></pre>
+<p><code>redis-check-aof</code> 显示：</p>
+<pre><code class="language-text">ok_up_to=&lt;VALID_OFFSET&gt;
+diff=&lt;TRUNCATED_BYTES&gt;</code></pre>
+<p>说明损坏点之后存在无效数据。执行 <code>redis-check-aof --fix</code> 后，Redis 可正常启动并返回 <code>PONG</code>。</p>
+<h2 id="section-7">官方参考</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/" target="_blank" rel="noreferrer">Redis Persistence：AOF 截断与损坏恢复</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

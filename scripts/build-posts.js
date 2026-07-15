@@ -6,9 +6,44 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260715-pagination';
+const assetVersion = '20260715-batch-2';
 
 const posts = [
+  {
+    sourceTitle: '日志链路压测与瓶颈排查操作手册',
+    title: '日志链路压测与瓶颈定位操作手册',
+    slug: 'log-pipeline-load-testing', category: '可观测性', symbol: 'LOG',
+    summary: '使用可控日志生成器逐级提升流量，并结合 Kafka Lag、Logstash PQ 和 Elasticsearch 写入指标定位持续吞吐瓶颈。',
+    tags: ['日志链路', '压测']
+  },
+  {
+    sourceTitle: 'Categraf-Ceph 无法采集 Ceph Metrics 事件记录',
+    title: 'Categraf 无法采集 Ceph Metrics：503 故障复盘',
+    slug: 'categraf-ceph-metrics-503', category: '可观测性', symbol: 'CEPH',
+    summary: '从采集端 503 追踪到 Ceph mgr Prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。',
+    tags: ['Categraf', 'Ceph']
+  },
+  {
+    sourceTitle: 'Redis AOF 损坏导致实例启动失败处理文档',
+    title: 'Redis AOF 损坏导致启动失败的修复与验证',
+    slug: 'redis-aof-corruption-recovery', category: 'Redis', symbol: 'AOF',
+    summary: '通过日志和 redis-check-aof 确认多段 AOF 损坏，完成备份、风险评估、修复及持久化状态验证。',
+    tags: ['AOF', '故障恢复']
+  },
+  {
+    sourceTitle: 'vCenter UI 无法打开虚拟机 Web 控制台排障笔记（Missing JWT / 授权数据同步失败）',
+    title: 'vCenter Web 控制台 Missing JWT 故障排查',
+    slug: 'vcenter-web-console-missing-jwt', category: '平台运维', symbol: 'JWT',
+    summary: '沿着 HVC、vpxd-svcs、内部 SSL 和 Machine SSL 证书链，定位 Web 控制台与授权同步同时失败的根因。',
+    tags: ['vCenter', '证书']
+  },
+  {
+    sourceTitle: 'vCenter UI 故障修复文档',
+    title: 'vCenter UI 故障：服务依赖与 PostgreSQL 损坏修复复盘',
+    slug: 'vcenter-ui-vpxd-postgresql-recovery', category: '平台运维', symbol: 'VC',
+    summary: '复盘 vCenter 服务依赖链未完整启动与 PostgreSQL 统计信息损坏叠加导致的 UI 故障，并明确高风险数据库操作边界。',
+    tags: ['vCenter', 'PostgreSQL']
+  },
   {
     sourceTitle: 'Kubernetes 1.34 高可用集群部署与 Calico 网络配置手册',
     title: 'Kubernetes 1.34 高可用集群与 Calico 部署手册',
@@ -350,6 +385,22 @@ function homeCards() {
   }).join('\n\n');
 }
 
+function homeFilters() {
+  const preferredOrder = ['Kubernetes', 'MySQL', 'Linux', 'Redis', '可观测性', '平台运维', '工具方法'];
+  const counts = posts.reduce((result, post) => {
+    result.set(post.category, (result.get(post.category) || 0) + 1);
+    return result;
+  }, new Map());
+  const categories = preferredOrder.filter(category => counts.has(category));
+  for (const category of counts.keys()) if (!categories.includes(category)) categories.push(category);
+
+  const buttons = [
+    `<button class="filter-button active" type="button" data-filter="all" aria-pressed="true">全部 <span>${posts.length}</span></button>`,
+    ...categories.map(category => `<button class="filter-button" type="button" data-filter="${escapeHtml(category)}" aria-pressed="false">${escapeHtml(category)} <span>${counts.get(category)}</span></button>`)
+  ];
+  return buttons.map(button => `            ${button}`).join('\n');
+}
+
 function build() {
   fs.mkdirSync(postsDir, { recursive: true });
   for (const post of posts) {
@@ -364,7 +415,13 @@ function build() {
   const start = '<!-- POSTS_START -->';
   const end = '<!-- POSTS_END -->';
   if (!indexHtml.includes(start) || !indexHtml.includes(end)) throw new Error('首页缺少文章生成标记');
-  const nextIndex = indexHtml.replace(new RegExp(`${start}[\\s\\S]*?${end}`), `${start}\n${homeCards()}\n          ${end}`);
+  const filterStart = '<!-- FILTERS_START -->';
+  const filterEnd = '<!-- FILTERS_END -->';
+  if (!indexHtml.includes(filterStart) || !indexHtml.includes(filterEnd)) throw new Error('首页缺少分类生成标记');
+  let nextIndex = indexHtml.replace(new RegExp(`${start}[\\s\\S]*?${end}`), `${start}\n${homeCards()}\n          ${end}`);
+  nextIndex = nextIndex.replace(new RegExp(`${filterStart}[\\s\\S]*?${filterEnd}`), `${filterStart}\n${homeFilters()}\n            ${filterEnd}`);
+  nextIndex = nextIndex.replace(/(<strong id="notes-result-count">)\d+/, `$1${posts.length}`);
+  nextIndex = nextIndex.replace(/(<span class="page-range" id="notes-page-range">)[^<]+/, `$1${`1–${Math.min(20, posts.length)} / ${posts.length}`}`);
   fs.writeFileSync(indexFile, nextIndex, 'utf8');
   fs.writeFileSync(path.join(root, 'posts.json'), JSON.stringify(posts.map(({ sourceTitle, symbol, ...post }) => post), null, 2) + '\n', 'utf8');
 }

@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#f4f1e8" />
     <title>Yalex 的技术笔记</title>
-    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-pagination" />
-    <script src="/assets/js/main.js?v=20260715-pagination" defer></script>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-2" />
+    <script src="/assets/js/main.js?v=20260715-batch-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到正文</a>
@@ -84,24 +84,93 @@
             <kbd aria-hidden="true">/</kbd>
           </label>
           <div class="category-filters" role="group" aria-label="按分类筛选笔记">
-            <button class="filter-button active" type="button" data-filter="all" aria-pressed="true">全部 <span>15</span></button>
+            <!-- FILTERS_START -->
+            <button class="filter-button active" type="button" data-filter="all" aria-pressed="true">全部 <span>20</span></button>
             <button class="filter-button" type="button" data-filter="Kubernetes" aria-pressed="false">Kubernetes <span>5</span></button>
             <button class="filter-button" type="button" data-filter="MySQL" aria-pressed="false">MySQL <span>3</span></button>
             <button class="filter-button" type="button" data-filter="Linux" aria-pressed="false">Linux <span>2</span></button>
-            <button class="filter-button" type="button" data-filter="平台运维" aria-pressed="false">平台运维 <span>4</span></button>
+            <button class="filter-button" type="button" data-filter="Redis" aria-pressed="false">Redis <span>1</span></button>
+            <button class="filter-button" type="button" data-filter="可观测性" aria-pressed="false">可观测性 <span>2</span></button>
+            <button class="filter-button" type="button" data-filter="平台运维" aria-pressed="false">平台运维 <span>6</span></button>
             <button class="filter-button" type="button" data-filter="工具方法" aria-pressed="false">工具方法 <span>1</span></button>
+            <!-- FILTERS_END -->
           </div>
           <div class="notes-status">
-            <span>找到 <strong id="notes-result-count">15</strong> 篇笔记</span>
+            <span>找到 <strong id="notes-result-count">20</strong> 篇笔记</span>
             <button id="clear-note-filters" type="button" hidden>清除筛选</button>
           </div>
         </div>
 
         <div class="article-grid" id="notes-list">
           <!-- POSTS_START -->
+          <article class="note-row" data-category="可观测性" data-search="日志链路压测与瓶颈定位操作手册 使用可控日志生成器逐级提升流量，并结合 kafka lag、logstash pq 和 elasticsearch 写入指标定位持续吞吐瓶颈。 可观测性 日志链路 压测">
+            <a class="note-row-link" href="/posts/log-pipeline-load-testing.html">
+              <span class="note-index" aria-hidden="true">01</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>日志链路 · 压测</span></div>
+                <h3 class="note-title">日志链路压测与瓶颈定位操作手册</h3>
+                <p class="note-summary">使用可控日志生成器逐级提升流量，并结合 Kafka Lag、Logstash PQ 和 Elasticsearch 写入指标定位持续吞吐瓶颈。</p>
+              </div>
+              <span class="note-time">8 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="可观测性" data-search="categraf 无法采集 ceph metrics：503 故障复盘 从采集端 503 追踪到 ceph mgr prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。 可观测性 categraf ceph">
+            <a class="note-row-link" href="/posts/categraf-ceph-metrics-503.html">
+              <span class="note-index" aria-hidden="true">02</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>Categraf · Ceph</span></div>
+                <h3 class="note-title">Categraf 无法采集 Ceph Metrics：503 故障复盘</h3>
+                <p class="note-summary">从采集端 503 追踪到 Ceph mgr Prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。</p>
+              </div>
+              <span class="note-time">6 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="Redis" data-search="redis aof 损坏导致启动失败的修复与验证 通过日志和 redis-check-aof 确认多段 aof 损坏，完成备份、风险评估、修复及持久化状态验证。 redis aof 故障恢复">
+            <a class="note-row-link" href="/posts/redis-aof-corruption-recovery.html">
+              <span class="note-index" aria-hidden="true">03</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>Redis</strong><span>AOF · 故障恢复</span></div>
+                <h3 class="note-title">Redis AOF 损坏导致启动失败的修复与验证</h3>
+                <p class="note-summary">通过日志和 redis-check-aof 确认多段 AOF 损坏，完成备份、风险评估、修复及持久化状态验证。</p>
+              </div>
+              <span class="note-time">4 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="平台运维" data-search="vcenter web 控制台 missing jwt 故障排查 沿着 hvc、vpxd-svcs、内部 ssl 和 machine ssl 证书链，定位 web 控制台与授权同步同时失败的根因。 平台运维 vcenter 证书">
+            <a class="note-row-link" href="/posts/vcenter-web-console-missing-jwt.html">
+              <span class="note-index" aria-hidden="true">04</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>平台运维</strong><span>vCenter · 证书</span></div>
+                <h3 class="note-title">vCenter Web 控制台 Missing JWT 故障排查</h3>
+                <p class="note-summary">沿着 HVC、vpxd-svcs、内部 SSL 和 Machine SSL 证书链，定位 Web 控制台与授权同步同时失败的根因。</p>
+              </div>
+              <span class="note-time">7 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="平台运维" data-search="vcenter ui 故障：服务依赖与 postgresql 损坏修复复盘 复盘 vcenter 服务依赖链未完整启动与 postgresql 统计信息损坏叠加导致的 ui 故障，并明确高风险数据库操作边界。 平台运维 vcenter postgresql">
+            <a class="note-row-link" href="/posts/vcenter-ui-vpxd-postgresql-recovery.html">
+              <span class="note-index" aria-hidden="true">05</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>平台运维</strong><span>vCenter · PostgreSQL</span></div>
+                <h3 class="note-title">vCenter UI 故障：服务依赖与 PostgreSQL 损坏修复复盘</h3>
+                <p class="note-summary">复盘 vCenter 服务依赖链未完整启动与 PostgreSQL 统计信息损坏叠加导致的 UI 故障，并明确高风险数据库操作边界。</p>
+              </div>
+              <span class="note-time">6 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
           <article class="note-row" data-category="Kubernetes" data-search="kubernetes 1.34 高可用集群与 calico 部署手册 从系统初始化、容器运行时到控制平面高可用与 calico 网络，完整搭建生产级 kubernetes 集群。 kubernetes 高可用 calico">
             <a class="note-row-link" href="/posts/kubernetes-1-34-ha-calico.html">
-              <span class="note-index" aria-hidden="true">01</span>
+              <span class="note-index" aria-hidden="true">06</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>高可用 · Calico</span></div>
                 <h3 class="note-title">Kubernetes 1.34 高可用集群与 Calico 部署手册</h3>
@@ -114,7 +183,7 @@
 
           <article class="note-row" data-category="Kubernetes" data-search="nginx gateway fabric 部署、配置与运维实践 围绕 gateway api 梳理 ngf 的安装、路由、tls、策略、监控与日常故障排查。 kubernetes gateway api nginx">
             <a class="note-row-link" href="/posts/nginx-gateway-fabric.html">
-              <span class="note-index" aria-hidden="true">02</span>
+              <span class="note-index" aria-hidden="true">07</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>Gateway API · NGINX</span></div>
                 <h3 class="note-title">NGINX Gateway Fabric 部署、配置与运维实践</h3>
@@ -127,7 +196,7 @@
 
           <article class="note-row" data-category="Kubernetes" data-search="ingress-nginx 部署与访问日志配置手册 对比两种部署方式，并说明 nodeport 暴露、日志格式调整与变更验证方法。 kubernetes ingress 日志">
             <a class="note-row-link" href="/posts/ingress-nginx-deployment-logging.html">
-              <span class="note-index" aria-hidden="true">03</span>
+              <span class="note-index" aria-hidden="true">08</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>Ingress · 日志</span></div>
                 <h3 class="note-title">Ingress-Nginx 部署与访问日志配置手册</h3>
@@ -140,7 +209,7 @@
 
           <article class="note-row" data-category="Kubernetes" data-search="在 kubernetes 中部署 harbor 私有镜像仓库 使用 helm 部署 harbor，配置 tls、ingress 与 nodeport，并完成镜像推送验证。 kubernetes harbor 镜像仓库">
             <a class="note-row-link" href="/posts/harbor-on-kubernetes.html">
-              <span class="note-index" aria-hidden="true">04</span>
+              <span class="note-index" aria-hidden="true">09</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>Harbor · 镜像仓库</span></div>
                 <h3 class="note-title">在 Kubernetes 中部署 Harbor 私有镜像仓库</h3>
@@ -153,7 +222,7 @@
 
           <article class="note-row" data-category="Kubernetes" data-search="headlamp 多集群只读接入与发布手册 通过最小权限 rbac 和多集群 kubeconfig，为 headlamp 建立安全的只读管理入口。 kubernetes headlamp rbac">
             <a class="note-row-link" href="/posts/headlamp-multi-cluster-readonly.html">
-              <span class="note-index" aria-hidden="true">05</span>
+              <span class="note-index" aria-hidden="true">10</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>Headlamp · RBAC</span></div>
                 <h3 class="note-title">Headlamp 多集群只读接入与发布手册</h3>
@@ -166,7 +235,7 @@
 
           <article class="note-row" data-category="MySQL" data-search="mysql gtid 主从复制部署与故障处理手册 覆盖 gtid 复制配置、初始同步、状态验证，以及常见复制中断的处理思路。 mysql gtid 主从复制">
             <a class="note-row-link" href="/posts/mysql-gtid-replication.html">
-              <span class="note-index" aria-hidden="true">06</span>
+              <span class="note-index" aria-hidden="true">11</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>MySQL</strong><span>GTID · 主从复制</span></div>
                 <h3 class="note-title">MySQL GTID 主从复制部署与故障处理手册</h3>
@@ -179,7 +248,7 @@
 
           <article class="note-row" data-category="MySQL" data-search="mysql 备份与恢复操作手册 对比 mysqldump 与 xtrabackup 的适用场景，整理备份、恢复和完整性验证步骤。 mysql 备份 恢复">
             <a class="note-row-link" href="/posts/mysql-backup-restore.html">
-              <span class="note-index" aria-hidden="true">07</span>
+              <span class="note-index" aria-hidden="true">12</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>MySQL</strong><span>备份 · 恢复</span></div>
                 <h3 class="note-title">MySQL 备份与恢复操作手册</h3>
@@ -192,7 +261,7 @@
 
           <article class="note-row" data-category="MySQL" data-search="mysql 8.0 rpm 安装与数据目录迁移手册 记录 rpm 安装、初始化、安全配置，以及数据目录迁移与回滚检查方法。 mysql 安装 数据迁移">
             <a class="note-row-link" href="/posts/mysql-8-rpm-data-migration.html">
-              <span class="note-index" aria-hidden="true">08</span>
+              <span class="note-index" aria-hidden="true">13</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>MySQL</strong><span>安装 · 数据迁移</span></div>
                 <h3 class="note-title">MySQL 8.0 RPM 安装与数据目录迁移手册</h3>
@@ -205,7 +274,7 @@
 
           <article class="note-row" data-category="Linux" data-search="linux 网卡 bond 配置与维护手册 说明常用 bond 模式、networkmanager 配置流程，以及切换和故障验证方法。 linux 网络 bond">
             <a class="note-row-link" href="/posts/linux-bond.html">
-              <span class="note-index" aria-hidden="true">09</span>
+              <span class="note-index" aria-hidden="true">14</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Linux</strong><span>网络 · Bond</span></div>
                 <h3 class="note-title">Linux 网卡 Bond 配置与维护手册</h3>
@@ -218,7 +287,7 @@
 
           <article class="note-row" data-category="Linux" data-search="linux 服务器病毒扫描与 kvrt 使用说明 整理 kvrt 下载、执行、扫描结果解读与生产环境使用时的安全注意事项。 linux 安全 kvrt">
             <a class="note-row-link" href="/posts/linux-kvrt-virus-scan.html">
-              <span class="note-index" aria-hidden="true">10</span>
+              <span class="note-index" aria-hidden="true">15</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Linux</strong><span>安全 · KVRT</span></div>
                 <h3 class="note-title">Linux 服务器病毒扫描与 KVRT 使用说明</h3>
@@ -231,7 +300,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="vcenter pbm / sps 服务异常排查记录 从 sps 服务、核心依赖和磁盘空间入手，复盘虚拟机创建失败的定位与恢复过程。 平台运维 vcenter 故障复盘">
             <a class="note-row-link" href="/posts/vcenter-pbm-sps-troubleshooting.html">
-              <span class="note-index" aria-hidden="true">11</span>
+              <span class="note-index" aria-hidden="true">16</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>vCenter · 故障复盘</span></div>
                 <h3 class="note-title">vCenter PBM / SPS 服务异常排查记录</h3>
@@ -244,7 +313,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="redisinsight 内网部署与访问控制手册 通过 docker compose 部署 redisinsight，并使用 nginx 基础认证收紧访问边界。 平台运维 redis 访问控制">
             <a class="note-row-link" href="/posts/redisinsight-intranet.html">
-              <span class="note-index" aria-hidden="true">12</span>
+              <span class="note-index" aria-hidden="true">17</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>Redis · 访问控制</span></div>
                 <h3 class="note-title">RedisInsight 内网部署与访问控制手册</h3>
@@ -257,7 +326,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="v2raya 容器部署与局域网代理使用手册 记录容器化部署、局域网代理参数，以及终端、docker 与 systemd 服务的代理配置。 平台运维 代理 docker">
             <a class="note-row-link" href="/posts/v2raya-lan-proxy.html">
-              <span class="note-index" aria-hidden="true">13</span>
+              <span class="note-index" aria-hidden="true">18</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>代理 · Docker</span></div>
                 <h3 class="note-title">v2rayA 容器部署与局域网代理使用手册</h3>
@@ -270,7 +339,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="阿里云 oss 文件传输与备份操作手册 使用 ossutil 完成大文件上传、下载、校验和定期备份，并说明内外网 endpoint 选择。 平台运维 阿里云 备份">
             <a class="note-row-link" href="/posts/aliyun-oss-backup.html">
-              <span class="note-index" aria-hidden="true">14</span>
+              <span class="note-index" aria-hidden="true">19</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>阿里云 · 备份</span></div>
                 <h3 class="note-title">阿里云 OSS 文件传输与备份操作手册</h3>
@@ -283,7 +352,7 @@
 
           <article class="note-row" data-category="工具方法" data-search="http 压测工具使用与结果分析手册 对比 oha 与 jmeter 的使用场景，说明并发参数、指标含义和结果分析方法。 工具方法 性能测试 oha">
             <a class="note-row-link" href="/posts/http-load-testing.html">
-              <span class="note-index" aria-hidden="true">15</span>
+              <span class="note-index" aria-hidden="true">20</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>工具方法</strong><span>性能测试 · oha</span></div>
                 <h3 class="note-title">HTTP 压测工具使用与结果分析手册</h3>
@@ -311,7 +380,7 @@
             </select>
             <span>篇</span>
           </label>
-          <span class="page-range" id="notes-page-range">1–15 / 15</span>
+          <span class="page-range" id="notes-page-range">1–20 / 20</span>
           <div class="page-controls" id="notes-page-controls" hidden>
             <button class="page-nav" id="notes-prev-page" type="button" aria-label="上一页">←</button>
             <div class="page-numbers" id="notes-page-numbers" aria-label="页码"></div>

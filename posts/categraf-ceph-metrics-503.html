@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="从采集端 503 追踪到 Ceph mgr Prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Categraf 无法采集 Ceph Metrics：503 故障复盘 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-2" />
+    <script src="/assets/js/main.js?v=20260715-batch-2" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">可观测性</p>
+        <h1>Categraf 无法采集 Ceph Metrics：503 故障复盘</h1>
+        <p class="article-lead">从采集端 503 追踪到 Ceph mgr Prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。</p>
+        <div class="article-info"><span>技术手册</span><span>约 6 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>可观测性</span><strong>CEPH</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">基本信息</a>
+          <a class="toc-level-2" href="#section-2">现象</a>
+          <a class="toc-level-2" href="#section-3">排查结论</a>
+          <a class="toc-level-2" href="#section-4">排查中确认到的关键状态</a>
+          <a class="toc-level-2" href="#section-5">本次实际执行的变更</a>
+          <a class="toc-level-3" href="#section-6">变更 1</a>
+          <a class="toc-level-3" href="#section-7">变更 2</a>
+          <a class="toc-level-2" href="#section-8">变更后验证结果</a>
+          <a class="toc-level-3" href="#section-9">Service 指向新的 active mgr</a>
+          <a class="toc-level-3" href="#section-10">从 categraf-ceph Pod 内验证 /metrics</a>
+          <a class="toc-level-3" href="#section-11">mgr 日志验证</a>
+          <a class="toc-level-2" href="#section-12">本次到底改了什么</a>
+          <a class="toc-level-2" href="#section-13">如果要还原，怎么还原</a>
+          <a class="toc-level-3" href="#section-14">还原配置</a>
+          <a class="toc-level-3" href="#section-15">让回滚配置生效</a>
+          <a class="toc-level-3" href="#section-16">还原后的预期表现</a>
+          <a class="toc-level-2" href="#section-17">建议</a>
+          <a class="toc-level-2" href="#section-18">可直接复用的命令</a>
+          <a class="toc-level-3" href="#section-19">查看当前策略</a>
+          <a class="toc-level-3" href="#section-20">设置为 return</a>
+          <a class="toc-level-3" href="#section-21">回滚为原值</a>
+          <a class="toc-level-3" href="#section-22">主动切换当前 active mgr</a>
+          <a class="toc-level-3" href="#section-23">验证 metrics 是否返回数据</a>
+          <a class="toc-level-2" href="#section-24">官方参考</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">基本信息</h2>
+<ul class="article-list">
+<li class="list-depth-0">时间：2026-04-20</li>
+<li class="list-depth-0">环境：Kubernetes</li>
+<li class="list-depth-0">相关命名空间：</li>
+<li class="list-depth-1"><code>monitoring</code></li>
+<li class="list-depth-1"><code>rook-ceph</code></li>
+<li class="list-depth-0">相关组件：</li>
+<li class="list-depth-1"><code>categraf-ceph</code></li>
+<li class="list-depth-1"><code>rook-ceph-mgr</code></li>
+</ul>
+<h2 id="section-2">现象</h2>
+<ul class="article-list">
+<li class="list-depth-0"><code>categraf-ceph</code> 无法采集到 Ceph 指标</li>
+<li class="list-depth-0"><code>categraf-ceph</code> 配置指向：</li>
+</ul>
+<pre><code class="language-toml">[[instances]]
+urls = [&quot;http://rook-ceph-mgr.rook-ceph.svc:9283/metrics&quot;]
+labels = { job=&quot;ceph&quot; }</code></pre>
+<ul class="article-list">
+<li class="list-depth-0">从 <code>categraf-ceph</code> Pod 内访问 <code>/metrics</code> 时，最初返回：</li>
+</ul>
+<pre><code class="language-http">HTTP/1.1 503 Service Unavailable</code></pre>
+<ul class="article-list">
+<li class="list-depth-0">返回体中的关键信息为：</li>
+</ul>
+<pre><code class="language-text">Gathering data took 60.02 seconds, metrics are stale for 45.02 seconds, returning &quot;service unavailable&quot;.</code></pre>
+<h2 id="section-3">排查结论</h2>
+<ul class="article-list">
+<li class="list-depth-0">问题不在 <code>categraf-ceph</code> 配置，也不在网络连通性</li>
+<li class="list-depth-0"><code>rook-ceph-mgr</code> 的 Service 和 Endpoints 正常</li>
+<li class="list-depth-0">根因在 <code>Ceph mgr</code> 的 <code>prometheus</code> 模块</li>
+<li class="list-depth-0"><code>mgr</code> 在生成 <code>/metrics</code> 时耗时过长，缓存过期后按当前策略直接返回 <code>503</code></li>
+</ul>
+<h2 id="section-4">排查中确认到的关键状态</h2>
+<ul class="article-list">
+<li class="list-depth-0"><code>mgr/prometheus/cache = true</code></li>
+<li class="list-depth-0"><code>mgr/prometheus/exclude_perf_counters = true</code></li>
+<li class="list-depth-0"><code>mgr/prometheus/scrape_interval = 15</code></li>
+<li class="list-depth-0">初始行为等价于缓存过期时失败返回 <code>503</code></li>
+</ul>
+<p>从 <code>Ceph mgr</code> 容器内源码确认，<code>prometheus</code> 模块支持以下两种陈旧缓存策略：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>fail</code></li>
+<li class="list-depth-0"><code>return</code></li>
+</ul>
+<p>其行为如下：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>fail</code>：缓存过期时返回 <code>503</code></li>
+<li class="list-depth-0"><code>return</code>：缓存过期时返回旧缓存内容</li>
+</ul>
+<h2 id="section-5">本次实际执行的变更</h2>
+<p>本次只修改了 <code>mgr</code> 侧，未对 <code>OSD</code>、<code>MON</code> 做任何调整。</p>
+<h3 id="section-6">变更 1</h3>
+<p>将 <code>mgr/prometheus/stale_cache_strategy</code> 设置为 <code>return</code></p>
+<p>执行命令：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config set mgr mgr/prometheus/stale_cache_strategy return</code></pre>
+<p>校验命令：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config get mgr mgr/prometheus/stale_cache_strategy</code></pre>
+<p>校验结果：</p>
+<pre><code class="language-text">return</code></pre>
+<h3 id="section-7">变更 2</h3>
+<p>由于配置写入后，原 active <code>mgr.a</code> 仍然继续返回旧行为的 <code>503</code>，因此执行了一次仅针对 <code>mgr</code> 的主备切换，让新的 active <code>mgr</code> 完整加载配置。</p>
+<p>执行命令：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr fail a</code></pre>
+<p>切换结果：</p>
+<ul class="article-list">
+<li class="list-depth-0">原 active：<code>mgr.a</code></li>
+<li class="list-depth-0">新 active：<code>mgr.b</code></li>
+</ul>
+<h2 id="section-8">变更后验证结果</h2>
+<h3 id="section-9">Service 指向新的 active mgr</h3>
+<pre><code class="language-bash">kubectl -n rook-ceph get endpoints rook-ceph-mgr -o wide</code></pre>
+<p>结果显示 <code>rook-ceph-mgr</code> 已指向新的 active <code>mgr.b</code></p>
+<h3 id="section-10">从 <code>categraf-ceph</code> Pod 内验证 <code>/metrics</code></h3>
+<p>执行命令：</p>
+<pre><code class="language-bash">kubectl -n monitoring exec deploy/categraf-ceph -- \
+  sh -lc &quot;curl -sS -D - --max-time 20 http://rook-ceph-mgr.rook-ceph.svc:9283/metrics | sed -n &#39;1,60p&#39;&quot;</code></pre>
+<p>返回结果：</p>
+<pre><code class="language-http">HTTP/1.1 200 OK
+Content-Type: text/plain;charset=utf-8</code></pre>
+<p>并且已经返回真实指标，例如：</p>
+<pre><code class="language-text">ceph_health_status
+ceph_mon_quorum_status
+ceph_mon_metadata
+ceph_mgr_status
+ceph_mgr_module_status</code></pre>
+<h3 id="section-11">mgr 日志验证</h3>
+<p><code>mgr-b</code> 日志中已出现成功访问记录：</p>
+<pre><code class="language-text">&quot;GET /metrics HTTP/1.1&quot; 200</code></pre>
+<h2 id="section-12">本次到底改了什么</h2>
+<p>如果只看最终生效动作，本次只做了两件事：</p>
+<ol class="article-list">
+<li class="list-depth-0">将 <code>Ceph mgr prometheus</code> 模块的陈旧缓存策略改为 <code>return</code></li>
+<li class="list-depth-0">将 active <code>mgr</code> 从 <code>a</code> 切换到 <code>b</code>，让新 active 实例按新配置提供 <code>/metrics</code></li>
+</ol>
+<p>没有做的事情：</p>
+<ul class="article-list">
+<li class="list-depth-0">没有修改 <code>categraf-ceph</code> 配置</li>
+<li class="list-depth-0">没有修改 <code>OSD</code></li>
+<li class="list-depth-0">没有修改 <code>MON</code></li>
+<li class="list-depth-0">没有修改 <code>Service</code>、<code>Endpoints</code>、<code>ConfigMap</code></li>
+<li class="list-depth-0">没有升级 Ceph、Rook 或 Categraf</li>
+</ul>
+<h2 id="section-13">如果要还原，怎么还原</h2>
+<h3 id="section-14">还原配置</h3>
+<p>回滚时应恢复为变更前实际记录的值，不要直接照抄其他环境：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config set mgr mgr/prometheus/stale_cache_strategy &lt;ORIGINAL_VALUE&gt;</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">Ceph 官方文档明确给出了 <code>return</code> 与 <code>fail</code> 两种行为配置</li>
+<li class="list-depth-0">部分版本的默认显示值可能为 <code>log</code>，应以现场版本、变更前记录和模块实际行为为准</li>
+<li class="list-depth-0">如果没有记录原值，先停止回滚动作并核对版本文档，不要凭经验猜测</li>
+</ul>
+<p>回滚后校验：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config get mgr mgr/prometheus/stale_cache_strategy</code></pre>
+<h3 id="section-15">让回滚配置生效</h3>
+<p>和本次变更一样，配置是否立即被当前 active <code>mgr</code> 完整采用，可能依赖模块重载或 active 切换。</p>
+<p>如果回滚后仍然看到旧行为，可以只动 <code>mgr</code> 再做一次主备切换，例如：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr fail b</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">当前 active 已经是 <code>mgr.b</code></li>
+<li class="list-depth-0">执行后会触发 active 切换</li>
+<li class="list-depth-0">这一步只影响 <code>mgr</code>，不涉及 <code>OSD</code> / <code>MON</code></li>
+</ul>
+<h3 id="section-16">还原后的预期表现</h3>
+<p>如果成功回滚为原行为，当 <code>/metrics</code> 生成再次超过缓存允许范围时，应重新出现：</p>
+<pre><code class="language-http">HTTP/1.1 503 Service Unavailable</code></pre>
+<p>以及类似提示：</p>
+<pre><code class="language-text">returning &quot;service unavailable&quot;</code></pre>
+<h2 id="section-17">建议</h2>
+<ul class="article-list">
+<li class="list-depth-0">当前方案本质上是“优先保证能取到 metrics”，即允许返回旧缓存</li>
+<li class="list-depth-0">这适合监控采集恢复，但不代表 <code>mgr</code> 指标生成变慢的问题已经根治</li>
+<li class="list-depth-0">后续如果要彻底解决，还应继续只读分析为什么 <code>mgr</code> 生成 <code>/metrics</code> 持续接近或超过 60 秒</li>
+</ul>
+<h2 id="section-18">可直接复用的命令</h2>
+<h3 id="section-19">查看当前策略</h3>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config get mgr mgr/prometheus/stale_cache_strategy</code></pre>
+<h3 id="section-20">设置为 return</h3>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config set mgr mgr/prometheus/stale_cache_strategy return</code></pre>
+<h3 id="section-21">回滚为原值</h3>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  ceph config set mgr mgr/prometheus/stale_cache_strategy log</code></pre>
+<h3 id="section-22">主动切换当前 active mgr</h3>
+<pre><code class="language-bash">kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr stat
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr fail &lt;当前active名称&gt;</code></pre>
+<h3 id="section-23">验证 metrics 是否返回数据</h3>
+<pre><code class="language-bash">kubectl -n monitoring exec deploy/categraf-ceph -- \
+  sh -lc &quot;curl -sS -D - --max-time 20 http://rook-ceph-mgr.rook-ceph.svc:9283/metrics | sed -n &#39;1,60p&#39;&quot;</code></pre>
+<h2 id="section-24">官方参考</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://docs.ceph.com/en/latest/mgr/prometheus/" target="_blank" rel="noreferrer">Ceph Prometheus Module：stale cache 策略</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

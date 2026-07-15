@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="沿着 HVC、vpxd-svcs、内部 SSL 和 Machine SSL 证书链，定位 Web 控制台与授权同步同时失败的根因。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>vCenter Web 控制台 Missing JWT 故障排查 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-2" />
+    <script src="/assets/js/main.js?v=20260715-batch-2" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>vCenter Web 控制台 Missing JWT 故障排查</h1>
+        <p class="article-lead">沿着 HVC、vpxd-svcs、内部 SSL 和 Machine SSL 证书链，定位 Web 控制台与授权同步同时失败的根因。</p>
+        <div class="article-info"><span>技术手册</span><span>约 7 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>JWT</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">1. 现象与关键线索</a>
+          <a class="toc-level-3" href="#section-2">1.1 vSphere Client 现象</a>
+          <a class="toc-level-3" href="#section-3">1.2 关键日志（rhttpproxy）</a>
+          <a class="toc-level-2" href="#section-4">2. 快速排除项（确认不是资源/磁盘）</a>
+          <a class="toc-level-3" href="#section-5">2.1 磁盘与 inode</a>
+          <a class="toc-level-2" href="#section-6">3. 核心定位：服务状态与“硬阻塞点”</a>
+          <a class="toc-level-3" href="#section-7">3.1 HVC（Web 控制台后端）状态</a>
+          <a class="toc-level-3" href="#section-8">3.2 vpxd-svcs（invsvc/authz）状态</a>
+          <a class="toc-level-3" href="#section-9">3.3 vpxd.log 关键报错：invsvc 503 + 证书过期</a>
+          <a class="toc-level-2" href="#section-10">4. 根因确认：Machine SSL 证书已过期</a>
+          <a class="toc-level-2" href="#section-11">5. 解决方案：重置全部证书（VMCA 统一重新签发）</a>
+          <a class="toc-level-3" href="#section-12">5.1 使用 certificate-manager 重置证书</a>
+          <a class="toc-level-3" href="#section-13">5.2 证书重置完成后的服务重启（建议）</a>
+          <a class="toc-level-2" href="#section-14">6. 修复后验证（必须做）</a>
+          <a class="toc-level-3" href="#section-15">6.1 验证 Machine SSL 有效期与 SAN</a>
+          <a class="toc-level-3" href="#section-16">6.2 验证关键服务恢复</a>
+          <a class="toc-level-3" href="#section-17">6.3 验证 JWT 错误是否消失（可选）</a>
+          <a class="toc-level-3" href="#section-18">6.4 浏览器侧处理</a>
+          <a class="toc-level-2" href="#section-19">7. 结果</a>
+          <a class="toc-level-2" href="#section-20">8. 经验总结（以后快速定位）</a>
+          <a class="toc-level-2" href="#section-21">官方参考</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>适用场景：vCenter 8.x（VCSA） 现象：vSphere Client 打开虚拟机 <strong>Web 控制台失败</strong>，提示“无法与虚拟机 Web 控制台建立连接”。 本次环境：通过 <strong>IP <code>&lt;IP_ADDRESS&gt;</code></strong> 访问 vCenter（不使用域名）。</p></blockquote>
+<hr />
+<h2 id="section-1">1. 现象与关键线索</h2>
+<h3 id="section-2">1.1 vSphere Client 现象</h3>
+<ul class="article-list">
+<li class="list-depth-0">登录 vCenter UI 后，打开某主机/虚拟机的 <strong>Web 控制台</strong>报错：</li>
+<li class="list-depth-1"><strong>无法与虚拟机 Web 控制台建立连接</strong></li>
+<li class="list-depth-0">vCenter UI 首页提示：</li>
+<li class="list-depth-1"><strong>授权数据同步失败</strong></li>
+<li class="list-depth-0">UI 下方任务/告警还出现：</li>
+<li class="list-depth-1">插件/反向代理相关失败（例如 vSAN/LCM 插件下载/部署 503 等）</li>
+</ul>
+<h3 id="section-3">1.2 关键日志（rhttpproxy）</h3>
+<p><code>/var/log/vmware/rhttpproxy/rhttpproxy.log</code> 频繁出现：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Missing JWT</code></li>
+<li class="list-depth-0"><code>JWT verification failed</code></li>
+<li class="list-depth-0"><code>URI: /clusters?uri=/extension-login</code></li>
+</ul>
+<p>这说明：<strong>vCenter 反代链路/插件/鉴权 token（JWT）无法正确生成/校验或携带</strong>，不是单纯 ESXi 902 端口网络问题。</p>
+<hr />
+<h2 id="section-4">2. 快速排除项（确认不是资源/磁盘）</h2>
+<h3 id="section-5">2.1 磁盘与 inode</h3>
+<pre><code class="language-bash">df -h
+df -i
+du -sh /storage/log /storage/core /storage/db 2&gt;/dev/null</code></pre>
+<p>本次结果：空间/ inode 都正常（排除磁盘满导致服务起不来/超时）。</p>
+<hr />
+<h2 id="section-6">3. 核心定位：服务状态与“硬阻塞点”</h2>
+<h3 id="section-7">3.1 HVC（Web 控制台后端）状态</h3>
+<p>HTML5 Web Console 依赖 <code>vmware-hvc</code>。若它不运行，控制台必挂。</p>
+<pre><code class="language-bash">/usr/lib/vmware-vmon/vmon-cli --status hvc
+service-control --status vmware-hvc</code></pre>
+<p>本次看到：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>hvc</code>：<code>STOPPED</code>，<code>HealthState: UNHEALTHY</code>，且 restart 会 <strong>timeout</strong></li>
+<li class="list-depth-0">这是控制台打不开的“硬阻塞点”之一</li>
+</ul>
+<h3 id="section-8">3.2 vpxd-svcs（invsvc/authz）状态</h3>
+<p>授权同步失败通常与 <code>vpxd-svcs</code>（inventory/authz）有关。</p>
+<pre><code class="language-bash">service-control --status vmware-vpxd-svcs
+service-control --restart vmware-vpxd-svcs</code></pre>
+<p>本次看到：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vmware-vpxd-svcs</code>：<strong>Stopped</strong></li>
+<li class="list-depth-0">重启失败：<code>vmon-cli RC=4</code> / <code>A system error occurred</code></li>
+</ul>
+<h3 id="section-9">3.3 vpxd.log 关键报错：invsvc 503 + 证书过期</h3>
+<p>查看 vpxd 相关日志：</p>
+<pre><code class="language-bash">tail -n 200 /var/log/vmware/vpxd/vpxd.log | egrep -i &quot;invsvc|authz|loginBySamlToken|503|handshake|certificate expired|jwt|token|trust|failed&quot;</code></pre>
+<p>本次关键命中：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>loginBySamlToken ... code: 503(Service Unavailable)</code>（访问 <code>/invsvc/vmomi/sdk</code>）</li>
+<li class="list-depth-0"><code>Failed to connect to Authz service</code></li>
+<li class="list-depth-0"><code>Failed to SSL handshake ... sslv3 alert certificate expired</code></li>
+</ul>
+<blockquote><p>结论：<strong>invsvc/authz 服务不可用（503）+ 内部 SSL 握手失败（证书过期）</strong> 直接导致：授权数据同步失败、插件/反代失败、JWT 失败、Web 控制台失败。</p></blockquote>
+<hr />
+<h2 id="section-10">4. 根因确认：Machine SSL 证书已过期</h2>
+<p>查看 Machine SSL 证书有效期：</p>
+<pre><code class="language-bash">/usr/lib/vmware-vmafd/bin/vecs-cli entry list --store MACHINE_SSL_CERT --text \
+ | egrep -i &quot;Not After|Subject:|Subject Alternative Name|IP Address|DNS:&quot; -n</code></pre>
+<p>本次看到：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Not After : &lt;EXPIRED_DATE&gt;</code>（<strong>已过期</strong>）</li>
+<li class="list-depth-0">SAN 里包含 <code>IP Address:&lt;IP_ADDRESS&gt;</code></li>
+</ul>
+<blockquote><p>证书过期会造成 vCenter 内部组件之间的 HTTPS/mTLS 互信失败 → <code>vpxd-svcs</code> 起不来 / <code>hvc</code> 起不来 / 授权数据同步失败 / rhttpproxy Missing JWT 等连锁问题。</p></blockquote>
+<hr />
+<h2 id="section-11">5. 解决方案：重置全部证书（VMCA 统一重新签发）</h2>
+<blockquote><p><strong>高风险变更</strong>：证书重置会影响 Machine SSL、Solution User、STS 及依赖 vCenter 信任链的外部产品。执行前应确认当前证书模式，在同一 SSO 域的所有 vCenter 节点上创建一致的离线快照或可恢复备份，并预留维护窗口。若使用外部 CA 或混合证书模式，应优先按 Broadcom 对应流程处理。</p></blockquote>
+<h3 id="section-12">5.1 使用 certificate-manager 重置证书</h3>
+<p>执行：</p>
+<pre><code class="language-bash">/usr/lib/vmware-vmca/bin/certificate-manager</code></pre>
+<p>在菜单中选择：</p>
+<ul class="article-list">
+<li class="list-depth-0"><strong>8. Reset all Certificates</strong></li>
+</ul>
+<p>然后选择：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Do you wish to generate all certificates using configuration file : Option[Y/N]?</code> → <code>y</code></li>
+</ul>
+<p>输入 SSO 管理员账号（示例）：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>&lt;ADMIN_ACCOUNT&gt;</code></li>
+</ul>
+<p>按提示填写证书信息（示例）：</p>
+<ul class="article-list">
+<li class="list-depth-0">Country：<code>CN</code></li>
+<li class="list-depth-0">Name：<code>&lt;ORGANIZATION&gt;</code></li>
+<li class="list-depth-0">Organization：<code>IT</code></li>
+<li class="list-depth-0">State：<code>Guangdong</code></li>
+<li class="list-depth-0">Locality：<code>Shenzhen</code></li>
+<li class="list-depth-0"><strong>IPAddress：<code>&lt;IP_ADDRESS&gt;</code></strong>（关键：保证你继续用 IP 访问）</li>
+<li class="list-depth-0">Hostname：填写 FQDN（例如 <code>&lt;VCENTER_FQDN&gt;</code>；工具要求 FQDN 不能填 IP）</li>
+<li class="list-depth-0">VMCA &#39;Name&#39;：例如 <code>&lt;ORGANIZATION&gt;</code>（VMCA 根证书 CN 标识）</li>
+</ul>
+<blockquote><p>说明：你坚持“只用 IP 访问”是可以的。关键是 <strong>SAN 里必须包含 <code>IP Address:&lt;IP_ADDRESS&gt;</code></strong>。 Hostname 字段只是 DNS 类型 SAN/主机名信息，用 <code>&lt;VCENTER_FQDN&gt;</code> 即可。</p></blockquote>
+<h3 id="section-13">5.2 证书重置完成后的服务重启（建议）</h3>
+<p>若工具未自动重启，可手动执行：</p>
+<pre><code class="language-bash">service-control --stop --all
+service-control --start --all</code></pre>
+<blockquote><p>注意：<code>service-control --restart</code> 一次只能重启一个服务；不要一次传多个服务名。</p></blockquote>
+<hr />
+<h2 id="section-14">6. 修复后验证（必须做）</h2>
+<h3 id="section-15">6.1 验证 Machine SSL 有效期与 SAN</h3>
+<pre><code class="language-bash">/usr/lib/vmware-vmafd/bin/vecs-cli entry list --store MACHINE_SSL_CERT --text \
+ | egrep -i &quot;Not After|Subject Alternative Name|IP Address|DNS:&quot; -n</code></pre>
+<p>本次修复后看到（示例）：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Not After : &lt;NEW_EXPIRY_DATE&gt;</code>（有效期已更新）</li>
+<li class="list-depth-0">SAN：<code>IP Address:&lt;IP_ADDRESS&gt;, DNS:&lt;VCENTER_FQDN&gt;</code></li>
+</ul>
+<h3 id="section-16">6.2 验证关键服务恢复</h3>
+<pre><code class="language-bash">service-control --status vmware-vpxd-svcs
+service-control --status vmware-hvc
+/usr/lib/vmware-vmon/vmon-cli --status hvc</code></pre>
+<p>期望：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vmware-vpxd-svcs</code>：Running</li>
+<li class="list-depth-0"><code>vmware-hvc</code>：Running</li>
+</ul>
+<h3 id="section-17">6.3 验证 JWT 错误是否消失（可选）</h3>
+<p>触发一次打开控制台后查看：</p>
+<pre><code class="language-bash">tail -n 200 /var/log/vmware/rhttpproxy/rhttpproxy.log | egrep -i &quot;Missing JWT|JWT verification failed|extension-login|401|403&quot;</code></pre>
+<p>正常情况下 <code>Missing JWT</code> 会显著减少/消失。</p>
+<h3 id="section-18">6.4 浏览器侧处理</h3>
+<p>证书变更后建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">清理 <code>https://&lt;IP_ADDRESS&gt;</code> 站点缓存/Cookie/旧证书例外记录</li>
+<li class="list-depth-0">无痕窗口重新登录测试一次</li>
+</ul>
+<hr />
+<h2 id="section-19">7. 结果</h2>
+<ul class="article-list">
+<li class="list-depth-0">vCenter UI 打开虚拟机 Web 控制台恢复正常</li>
+<li class="list-depth-0">“授权数据同步失败”随之消失/恢复</li>
+<li class="list-depth-0"><code>vpxd-svcs</code>、<code>hvc</code> 正常 Running</li>
+<li class="list-depth-0">rhttpproxy 不再持续刷 <code>Missing JWT</code></li>
+</ul>
+<hr />
+<h2 id="section-20">8. 经验总结（以后快速定位）</h2>
+<p>遇到：</p>
+<ul class="article-list">
+<li class="list-depth-0">控制台打不开 + <code>Missing JWT</code></li>
+<li class="list-depth-0">UI 提示“授权数据同步失败”</li>
+<li class="list-depth-0">插件/反代 503</li>
+</ul>
+<p>优先检查三件事：</p>
+<ol class="article-list">
+<li class="list-depth-0"><strong>证书是否过期</strong></li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1"><code>vecs-cli ... MACHINE_SSL_CERT</code> 看 Not After</li>
+</ul>
+<ol class="article-list">
+<li class="list-depth-0"><strong>vpxd-svcs 是否 Running</strong></li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1">授权/Inventory/Authz 的关键组件</li>
+</ul>
+<ol class="article-list">
+<li class="list-depth-0"><strong>hvc 是否 Running</strong></li>
+</ol>
+<ul class="article-list">
+<li class="list-depth-1">Web 控制台后端服务，Stopped 就必挂</li>
+</ul>
+<p>若发现证书过期，应先确认当前证书模式、受影响证书范围和关联产品，再按 Broadcom 对应流程选择仅替换 Machine SSL 或重置全部证书；不要把 Option 8 当作所有场景的默认第一步。</p>
+<h2 id="section-21">官方参考</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://knowledge.broadcom.com/external/article/318946" target="_blank" rel="noreferrer">Broadcom：使用 vSphere Certificate Manager 替换证书</a></li>
+<li class="list-depth-0"><a href="https://knowledge.broadcom.com/external/article/385107" target="_blank" rel="noreferrer">Broadcom：vCert 过期证书处理工具</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

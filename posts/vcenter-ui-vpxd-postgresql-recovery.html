@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="复盘 vCenter 服务依赖链未完整启动与 PostgreSQL 统计信息损坏叠加导致的 UI 故障，并明确高风险数据库操作边界。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>vCenter UI 故障：服务依赖与 PostgreSQL 损坏修复复盘 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-2" />
+    <script src="/assets/js/main.js?v=20260715-batch-2" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>vCenter UI 故障：服务依赖与 PostgreSQL 损坏修复复盘</h1>
+        <p class="article-lead">复盘 vCenter 服务依赖链未完整启动与 PostgreSQL 统计信息损坏叠加导致的 UI 故障，并明确高风险数据库操作边界。</p>
+        <div class="article-info"><span>技术手册</span><span>约 6 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>VC</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">基本信息</a>
+          <a class="toc-level-2" href="#section-2">故障现象</a>
+          <a class="toc-level-2" href="#section-3">根因分析</a>
+          <a class="toc-level-3" href="#section-4">1. vCenter 关键依赖链未完整启动</a>
+          <a class="toc-level-3" href="#section-5">2. PostgreSQL 系统统计信息 toast 损坏</a>
+          <a class="toc-level-2" href="#section-6">处理过程</a>
+          <a class="toc-level-3" href="#section-7">1. 基础健康检查</a>
+          <a class="toc-level-3" href="#section-8">2. 恢复反向代理和 UI 基础访问</a>
+          <a class="toc-level-3" href="#section-9">3. 修复目录服务链路</a>
+          <a class="toc-level-3" href="#section-10">4. 修复 SSO 依赖链</a>
+          <a class="toc-level-3" href="#section-11">5. 处理数据库统计信息损坏</a>
+          <a class="toc-level-3" href="#section-12">6. 补齐完整服务集</a>
+          <a class="toc-level-2" href="#section-13">最终结果</a>
+          <a class="toc-level-2" href="#section-14">影响范围</a>
+          <a class="toc-level-2" href="#section-15">修复中涉及的关键结论</a>
+          <a class="toc-level-2" href="#section-16">后续建议</a>
+          <a class="toc-level-3" href="#section-17">建议立即执行</a>
+          <a class="toc-level-3" href="#section-18">建议后续安排</a>
+          <a class="toc-level-2" href="#section-19">风险说明</a>
+          <a class="toc-level-2" href="#section-20">附加说明</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">基本信息</h2>
+<ul class="article-list">
+<li class="list-depth-0">故障对象: <code>vCenter Server 8.0.3</code></li>
+<li class="list-depth-0">管理地址: <code>&lt;IP_ADDRESS&gt;</code></li>
+<li class="list-depth-0">故障日期: <code>2026-03-11</code></li>
+<li class="list-depth-0">故障现象: <code>https://&lt;IP_ADDRESS&gt;/ui/</code> 无法正常打开，后续恢复后短暂出现页面一直转圈</li>
+<li class="list-depth-0">处理方式: 通过 SSH 登录系统进行服务、日志、数据库和 SSO 组件排查与修复</li>
+</ul>
+<h2 id="section-2">故障现象</h2>
+<p>用户反馈 vCenter Web UI 无法打开，但 SSH 可以登录服务器。</p>
+<p>排查初期确认到以下现象:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>5480</code> 管理端口可访问</li>
+<li class="list-depth-0"><code>443</code> 业务端口初期不可访问</li>
+<li class="list-depth-0"><code>vmware-rhttpproxy</code>、<code>vmware-vpxd</code>、<code>vsphere-ui</code> 存在停止状态</li>
+<li class="list-depth-0">磁盘、内存资源正常，无明显空间不足或内存耗尽问题</li>
+</ul>
+<h2 id="section-3">根因分析</h2>
+<p>此次故障不是单点问题，而是两层问题叠加导致。</p>
+<h3 id="section-4">1. vCenter 关键依赖链未完整启动</h3>
+<p>在 <code>2026-03-11 08:33</code> 左右，<code>vmware-vmon</code> 重启后，部分基础服务未完整恢复，导致:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vmdird</code> 停止</li>
+<li class="list-depth-0"><code>vmcad</code> 停止</li>
+<li class="list-depth-0"><code>lookupsvc</code> 停止</li>
+<li class="list-depth-0"><code>vmware-stsd</code> 停止</li>
+<li class="list-depth-0"><code>vmware-vapi-endpoint</code> 停止</li>
+<li class="list-depth-0"><code>vmware-envoy</code> / <code>vmware-envoy-sidecar</code> 停止</li>
+</ul>
+<p>这直接带来两个后果:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vpxd-prestart.py</code> 调用 <code>vmafd-cli get-machine-id --server-name localhost</code> 失败</li>
+<li class="list-depth-0"><code>vpxd</code> 无法连接本地 SSO 端点 <code>http://localhost:1080</code></li>
+</ul>
+<p>典型报错:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Error 1021: Could not connect to the local service VMware AFD</code></li>
+<li class="list-depth-0"><code>Error 9127: Could not connect to VMware Directory Service via LDAP</code></li>
+<li class="list-depth-0"><code>Connection refused: localhost:1080</code></li>
+</ul>
+<h3 id="section-5">2. PostgreSQL 系统统计信息 toast 损坏</h3>
+<p>在恢复完目录服务和 SSO 依赖后，<code>vpxd</code> 仍然启动失败。继续排查 <code>vpxd.log</code> 发现数据库错误:</p>
+<p><code>ERROR: missing chunk number 0 for toast value 89086 in pg_toast_2619</code></p>
+<p>初看像是业务表 <code>vc.vpx_event_arg_8</code> 损坏，但进一步确认:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>pg_toast_2619</code> 实际对应 <code>pg_catalog.pg_statistic</code></li>
+<li class="list-depth-0">损坏的是 PostgreSQL 系统统计信息 toast</li>
+<li class="list-depth-0">该统计信息与 <code>vc.vpx_event_arg_8</code> 相关</li>
+</ul>
+<p>因此本质上是:</p>
+<ul class="article-list">
+<li class="list-depth-0">数据库业务表本体仍可读</li>
+<li class="list-depth-0">但 <code>vpxd</code> 在执行查询计划或访问统计信息时触发系统统计 toast 损坏</li>
+<li class="list-depth-0">最终导致 <code>vpxd</code> 初始化失败</li>
+</ul>
+<h2 id="section-6">处理过程</h2>
+<h3 id="section-7">1. 基础健康检查</h3>
+<p>检查了以下内容:</p>
+<ul class="article-list">
+<li class="list-depth-0">磁盘空间 <code>df -h</code></li>
+<li class="list-depth-0">内存使用 <code>free -h</code></li>
+<li class="list-depth-0">服务状态 <code>service-control --status --all</code></li>
+<li class="list-depth-0"><code>vmware-vmon</code> 日志</li>
+</ul>
+<p>结果:</p>
+<ul class="article-list">
+<li class="list-depth-0">存储空间充足</li>
+<li class="list-depth-0">内存充足</li>
+<li class="list-depth-0">无明显资源瓶颈</li>
+</ul>
+<h3 id="section-8">2. 恢复反向代理和 UI 基础访问</h3>
+<p>确认并恢复:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vmware-rhttpproxy</code></li>
+<li class="list-depth-0"><code>vsphere-ui</code></li>
+</ul>
+<p>恢复后:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>https://&lt;IP_ADDRESS&gt;/ui/</code> 可返回 <code>HTTP 200</code></li>
+</ul>
+<h3 id="section-9">3. 修复目录服务链路</h3>
+<p>发现 <code>vpxd</code> 预启动失败，原因是本地 AFD / Directory 链路不可用。执行恢复:</p>
+<ul class="article-list">
+<li class="list-depth-0">启动 <code>vmdird</code></li>
+<li class="list-depth-0">启动 <code>vmcad</code></li>
+</ul>
+<p>验证结果:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>389/636/2012/2020</code> 端口恢复监听</li>
+<li class="list-depth-0"><code>vmafd-cli get-machine-id --server-name localhost</code> 可正常返回 machine-id</li>
+</ul>
+<h3 id="section-10">4. 修复 SSO 依赖链</h3>
+<p>继续恢复以下服务:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>lookupsvc</code></li>
+<li class="list-depth-0"><code>vmware-stsd</code></li>
+<li class="list-depth-0"><code>vmware-vapi-endpoint</code></li>
+<li class="list-depth-0"><code>vmware-envoy</code></li>
+<li class="list-depth-0"><code>vmware-envoy-sidecar</code></li>
+</ul>
+<p>验证结果:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>localhost:1080</code> 恢复监听</li>
+<li class="list-depth-0"><code>443</code> 恢复监听</li>
+<li class="list-depth-0">WebSSO 流程恢复</li>
+</ul>
+<h3 id="section-11">5. 处理数据库统计信息损坏</h3>
+<blockquote><p><strong>高风险且不可通用照抄</strong>：直接修改 PostgreSQL 系统目录可能造成进一步损坏。下面记录的是本次现场在完成备份、确认对象映射并具备回滚条件后的动作，不代表所有 <code>missing chunk</code> 错误都适用。生产环境应优先使用 VCSA 文件级备份并联系 Broadcom 支持，至少先在副本或恢复环境中验证。</p></blockquote>
+<p>在 <code>vpxd</code> 仍然失败后，继续分析 PostgreSQL 元数据，确认:</p>
+<ul class="article-list">
+<li class="list-depth-0">损坏来自 <code>pg_catalog.pg_statistic</code></li>
+<li class="list-depth-0">与 <code>vc.vpx_event_arg_8</code> 统计信息有关</li>
+</ul>
+<p>处理方式:</p>
+<ol class="article-list">
+<li class="list-depth-0">删除该表对应的统计信息</li>
+<li class="list-depth-0">重新执行 <code>ANALYZE</code></li>
+</ol>
+<p>执行逻辑:</p>
+<pre><code class="language-sql">delete from pg_statistic where starelid=&#39;vc.vpx_event_arg_8&#39;::regclass;
+analyze vc.vpx_event_arg_8;</code></pre>
+<p>处理后:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vmware-vpxd</code> 启动成功</li>
+</ul>
+<h3 id="section-12">6. 补齐完整服务集</h3>
+<p>为避免 UI 能打开但内部功能异常，后续执行:</p>
+<pre><code class="language-bash">service-control --start --all</code></pre>
+<p>最终补齐了绝大多数自动服务，关键组件全部恢复。</p>
+<h2 id="section-13">最终结果</h2>
+<p>最终确认以下核心服务已恢复:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>vmware-vpxd</code></li>
+<li class="list-depth-0"><code>vmware-vpxd-svcs</code></li>
+<li class="list-depth-0"><code>vsphere-ui</code></li>
+<li class="list-depth-0"><code>vmware-rhttpproxy</code></li>
+<li class="list-depth-0"><code>lookupsvc</code></li>
+<li class="list-depth-0"><code>vmware-stsd</code></li>
+<li class="list-depth-0"><code>vmware-vapi-endpoint</code></li>
+<li class="list-depth-0"><code>vmware-envoy</code></li>
+<li class="list-depth-0"><code>vmware-envoy-sidecar</code></li>
+<li class="list-depth-0"><code>vmdird</code></li>
+<li class="list-depth-0"><code>vmcad</code></li>
+</ul>
+<p>验证结果:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>https://&lt;IP_ADDRESS&gt;/ui/</code> 返回 <code>HTTP 200</code></li>
+<li class="list-depth-0"><code>https://&lt;IP_ADDRESS&gt;/sdk/</code> 可正常响应</li>
+<li class="list-depth-0">用户侧再次访问 <code>https://&lt;IP_ADDRESS&gt;/ui/</code> 已恢复正常</li>
+</ul>
+<h2 id="section-14">影响范围</h2>
+<ul class="article-list">
+<li class="list-depth-0">vCenter Web UI 访问异常</li>
+<li class="list-depth-0">SSO 登录链路异常</li>
+<li class="list-depth-0">部分 inventory / API 后端服务不可用</li>
+<li class="list-depth-0">在服务未全部恢复前，页面可能出现持续转圈</li>
+</ul>
+<p>未发现以下问题:</p>
+<ul class="article-list">
+<li class="list-depth-0">磁盘满</li>
+<li class="list-depth-0">内存不足</li>
+<li class="list-depth-0">证书过期导致的直接中断</li>
+</ul>
+<h2 id="section-15">修复中涉及的关键结论</h2>
+<ul class="article-list">
+<li class="list-depth-0"><code>5480</code> 可访问但 <code>443</code> 异常，说明设备未宕机，问题集中在业务服务链路</li>
+<li class="list-depth-0"><code>vpxd</code> 是 UI 的核心依赖，<code>vsphere-ui</code> 单独运行不代表登录后功能正常</li>
+<li class="list-depth-0"><code>vmdird/vmcad/lookupsvc/sts/envoy</code> 是 <code>vpxd</code> 正常启动的重要前置依赖</li>
+<li class="list-depth-0"><code>pg_toast_2619</code> 对应的是 <code>pg_catalog.pg_statistic</code>，不是业务表 toast，本次修复重点是重建统计信息而不是恢复业务数据</li>
+</ul>
+<h2 id="section-16">后续建议</h2>
+<h3 id="section-17">建议立即执行</h3>
+<ul class="article-list">
+<li class="list-depth-0">做一次 vCenter 文件级备份</li>
+<li class="list-depth-0">导出当前快照或备份点信息</li>
+<li class="list-depth-0">观察未来 24 小时内 <code>vpxd</code>、<code>vsphere-ui</code>、<code>vmdird</code> 是否稳定</li>
+</ul>
+<h3 id="section-18">建议后续安排</h3>
+<ul class="article-list">
+<li class="list-depth-0">检查近期是否存在异常重启、存储抖动或数据库层异常</li>
+<li class="list-depth-0">检查宿主机磁盘和底层存储健康状态</li>
+<li class="list-depth-0">检查 <code>/var/log/vmware/vpxd/</code>、<code>/var/log/vmware/vmon/</code>、<code>/var/log/vmware/vmafdd/</code> 的后续报错趋势</li>
+<li class="list-depth-0">在维护窗口内评估一次完整健康检查</li>
+</ul>
+<h2 id="section-19">风险说明</h2>
+<p>虽然本次已恢复业务，但出现 <code>pg_statistic</code> toast 损坏说明数据库层曾发生过异常状态。当前修复方式是有效且可运行的，但仍建议尽快完成备份，并关注是否再次出现数据库统计信息或服务链路异常。</p>
+<h2 id="section-20">附加说明</h2>
+<p>排障过程中曾创建辅助恢复表:</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>&lt;RECOVERY_TABLE&gt;</code></li>
+</ul>
+<p>该表是排障过程中的临时备份快照，不影响当前运行。清理前必须再次核实对象用途、备份有效性和保留要求，本文不提供直接删除命令。</p>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>
