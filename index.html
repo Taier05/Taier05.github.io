@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#f4f1e8" />
     <title>Yalex 的技术笔记</title>
-    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-2" />
-    <script src="/assets/js/main.js?v=20260715-batch-2" defer></script>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-3" />
+    <script src="/assets/js/main.js?v=20260715-batch-3" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到正文</a>
@@ -85,26 +85,91 @@
           </label>
           <div class="category-filters" role="group" aria-label="按分类筛选笔记">
             <!-- FILTERS_START -->
-            <button class="filter-button active" type="button" data-filter="all" aria-pressed="true">全部 <span>11</span></button>
+            <button class="filter-button active" type="button" data-filter="all" aria-pressed="true">全部 <span>16</span></button>
             <button class="filter-button" type="button" data-filter="Kubernetes" aria-pressed="false">Kubernetes <span>2</span></button>
             <button class="filter-button" type="button" data-filter="Linux" aria-pressed="false">Linux <span>1</span></button>
             <button class="filter-button" type="button" data-filter="Redis" aria-pressed="false">Redis <span>1</span></button>
-            <button class="filter-button" type="button" data-filter="可观测性" aria-pressed="false">可观测性 <span>2</span></button>
+            <button class="filter-button" type="button" data-filter="可观测性" aria-pressed="false">可观测性 <span>7</span></button>
             <button class="filter-button" type="button" data-filter="平台运维" aria-pressed="false">平台运维 <span>4</span></button>
             <button class="filter-button" type="button" data-filter="工具方法" aria-pressed="false">工具方法 <span>1</span></button>
             <!-- FILTERS_END -->
           </div>
           <div class="notes-status">
-            <span>找到 <strong id="notes-result-count">11</strong> 篇笔记</span>
+            <span>找到 <strong id="notes-result-count">16</strong> 篇笔记</span>
             <button id="clear-note-filters" type="button" hidden>清除筛选</button>
           </div>
         </div>
 
         <div class="article-grid" id="notes-list">
           <!-- POSTS_START -->
+          <article class="note-row" data-category="可观测性" data-search="kubernetes 中部署 nightingale 与扩展采集 使用 helm 部署 nightingale，比较 prometheus 与 victoriametrics 存储方案，并扩展 kubernetes 和 elasticsearch 指标采集。 可观测性 nightingale categraf">
+            <a class="note-row-link" href="/posts/nightingale-kubernetes-deployment.html">
+              <span class="note-index" aria-hidden="true">01</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>Nightingale · Categraf</span></div>
+                <h3 class="note-title">Kubernetes 中部署 Nightingale 与扩展采集</h3>
+                <p class="note-summary">使用 Helm 部署 Nightingale，比较 Prometheus 与 VictoriaMetrics 存储方案，并扩展 Kubernetes 和 Elasticsearch 指标采集。</p>
+              </div>
+              <span class="note-time">12 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="可观测性" data-search="vsphere 监控接入与 categraf 部署手册 对比 vmware_exporter 中转与 categraf 直连两种采集链路，覆盖凭据管理、部署验证和常见故障排查。 可观测性 vsphere categraf">
+            <a class="note-row-link" href="/posts/vsphere-monitoring-categraf.html">
+              <span class="note-index" aria-hidden="true">02</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>vSphere · Categraf</span></div>
+                <h3 class="note-title">vSphere 监控接入与 Categraf 部署手册</h3>
+                <p class="note-summary">对比 vmware_exporter 中转与 Categraf 直连两种采集链路，覆盖凭据管理、部署验证和常见故障排查。</p>
+              </div>
+              <span class="note-time">12 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="可观测性" data-search="idrac 指标采集与 categraf 对接手册 在 kubernetes 中部署 idrac exporter，通过 categraf 批量采集服务器 bmc 指标，并说明凭据与网络安全边界。 可观测性 idrac bmc">
+            <a class="note-row-link" href="/posts/idrac-monitoring-categraf.html">
+              <span class="note-index" aria-hidden="true">03</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>iDRAC · BMC</span></div>
+                <h3 class="note-title">iDRAC 指标采集与 Categraf 对接手册</h3>
+                <p class="note-summary">在 Kubernetes 中部署 iDRAC Exporter，通过 Categraf 批量采集服务器 BMC 指标，并说明凭据与网络安全边界。</p>
+              </div>
+              <span class="note-time">11 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="可观测性" data-search="esxi 主机磁盘 smart 监控部署手册 通过 ssh 调用 esxcli 采集 esxi 磁盘 smart 信息，以 prometheus 指标暴露并接入 categraf。 可观测性 esxi smart">
+            <a class="note-row-link" href="/posts/esxi-smart-monitoring.html">
+              <span class="note-index" aria-hidden="true">04</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>ESXi · SMART</span></div>
+                <h3 class="note-title">ESXi 主机磁盘 SMART 监控部署手册</h3>
+                <p class="note-summary">通过 SSH 调用 esxcli 采集 ESXi 磁盘 SMART 信息，以 Prometheus 指标暴露并接入 Categraf。</p>
+              </div>
+              <span class="note-time">14 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
+          <article class="note-row" data-category="可观测性" data-search="网络设备 snmp 监控与 categraf 采集手册 使用 categraf snmp 插件采集网络设备系统与接口指标，覆盖 oid 配置、连通性验证和采集稳定性排查。 可观测性 snmp 网络设备">
+            <a class="note-row-link" href="/posts/network-snmp-categraf.html">
+              <span class="note-index" aria-hidden="true">05</span>
+              <div class="note-main">
+                <div class="note-eyebrow"><strong>可观测性</strong><span>SNMP · 网络设备</span></div>
+                <h3 class="note-title">网络设备 SNMP 监控与 Categraf 采集手册</h3>
+                <p class="note-summary">使用 Categraf SNMP 插件采集网络设备系统与接口指标，覆盖 OID 配置、连通性验证和采集稳定性排查。</p>
+              </div>
+              <span class="note-time">9 分钟阅读</span>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
+          </article>
+
           <article class="note-row" data-category="可观测性" data-search="日志链路压测与瓶颈定位操作手册 使用可控日志生成器逐级提升流量，并结合 kafka lag、logstash pq 和 elasticsearch 写入指标定位持续吞吐瓶颈。 可观测性 日志链路 压测">
             <a class="note-row-link" href="/posts/log-pipeline-load-testing.html">
-              <span class="note-index" aria-hidden="true">01</span>
+              <span class="note-index" aria-hidden="true">06</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>可观测性</strong><span>日志链路 · 压测</span></div>
                 <h3 class="note-title">日志链路压测与瓶颈定位操作手册</h3>
@@ -117,7 +182,7 @@
 
           <article class="note-row" data-category="可观测性" data-search="categraf 无法采集 ceph metrics：503 故障复盘 从采集端 503 追踪到 ceph mgr prometheus 模块的陈旧缓存策略，并记录主备切换、验证和安全回滚方法。 可观测性 categraf ceph">
             <a class="note-row-link" href="/posts/categraf-ceph-metrics-503.html">
-              <span class="note-index" aria-hidden="true">02</span>
+              <span class="note-index" aria-hidden="true">07</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>可观测性</strong><span>Categraf · Ceph</span></div>
                 <h3 class="note-title">Categraf 无法采集 Ceph Metrics：503 故障复盘</h3>
@@ -130,7 +195,7 @@
 
           <article class="note-row" data-category="Redis" data-search="redis aof 损坏导致启动失败的修复与验证 通过日志和 redis-check-aof 确认多段 aof 损坏，完成备份、风险评估、修复及持久化状态验证。 redis aof 故障恢复">
             <a class="note-row-link" href="/posts/redis-aof-corruption-recovery.html">
-              <span class="note-index" aria-hidden="true">03</span>
+              <span class="note-index" aria-hidden="true">08</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Redis</strong><span>AOF · 故障恢复</span></div>
                 <h3 class="note-title">Redis AOF 损坏导致启动失败的修复与验证</h3>
@@ -143,7 +208,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="vcenter web 控制台 missing jwt 故障排查 沿着 hvc、vpxd-svcs、内部 ssl 和 machine ssl 证书链，定位 web 控制台与授权同步同时失败的根因。 平台运维 vcenter 证书">
             <a class="note-row-link" href="/posts/vcenter-web-console-missing-jwt.html">
-              <span class="note-index" aria-hidden="true">04</span>
+              <span class="note-index" aria-hidden="true">09</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>vCenter · 证书</span></div>
                 <h3 class="note-title">vCenter Web 控制台 Missing JWT 故障排查</h3>
@@ -156,7 +221,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="vcenter ui 故障：服务依赖与 postgresql 损坏修复复盘 复盘 vcenter 服务依赖链未完整启动与 postgresql 统计信息损坏叠加导致的 ui 故障，并明确高风险数据库操作边界。 平台运维 vcenter postgresql">
             <a class="note-row-link" href="/posts/vcenter-ui-vpxd-postgresql-recovery.html">
-              <span class="note-index" aria-hidden="true">05</span>
+              <span class="note-index" aria-hidden="true">10</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>vCenter · PostgreSQL</span></div>
                 <h3 class="note-title">vCenter UI 故障：服务依赖与 PostgreSQL 损坏修复复盘</h3>
@@ -169,7 +234,7 @@
 
           <article class="note-row" data-category="Kubernetes" data-search="kubernetes 1.34 高可用集群与 calico 部署手册 从系统初始化、容器运行时到控制平面高可用与 calico 网络，完整搭建生产级 kubernetes 集群。 kubernetes 高可用 calico">
             <a class="note-row-link" href="/posts/kubernetes-1-34-ha-calico.html">
-              <span class="note-index" aria-hidden="true">06</span>
+              <span class="note-index" aria-hidden="true">11</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>高可用 · Calico</span></div>
                 <h3 class="note-title">Kubernetes 1.34 高可用集群与 Calico 部署手册</h3>
@@ -182,7 +247,7 @@
 
           <article class="note-row" data-category="Kubernetes" data-search="nginx gateway fabric 部署、配置与运维实践 围绕 gateway api 梳理 ngf 的安装、路由、tls、策略、监控与日常故障排查。 kubernetes gateway api nginx">
             <a class="note-row-link" href="/posts/nginx-gateway-fabric.html">
-              <span class="note-index" aria-hidden="true">07</span>
+              <span class="note-index" aria-hidden="true">12</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Kubernetes</strong><span>Gateway API · NGINX</span></div>
                 <h3 class="note-title">NGINX Gateway Fabric 部署、配置与运维实践</h3>
@@ -195,7 +260,7 @@
 
           <article class="note-row" data-category="Linux" data-search="linux 网卡 bond 配置与维护手册 说明常用 bond 模式、networkmanager 配置流程，以及切换和故障验证方法。 linux 网络 bond">
             <a class="note-row-link" href="/posts/linux-bond.html">
-              <span class="note-index" aria-hidden="true">08</span>
+              <span class="note-index" aria-hidden="true">13</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>Linux</strong><span>网络 · Bond</span></div>
                 <h3 class="note-title">Linux 网卡 Bond 配置与维护手册</h3>
@@ -208,7 +273,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="vcenter pbm / sps 服务异常排查记录 从 sps 服务、核心依赖和磁盘空间入手，复盘虚拟机创建失败的定位与恢复过程。 平台运维 vcenter 故障复盘">
             <a class="note-row-link" href="/posts/vcenter-pbm-sps-troubleshooting.html">
-              <span class="note-index" aria-hidden="true">09</span>
+              <span class="note-index" aria-hidden="true">14</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>vCenter · 故障复盘</span></div>
                 <h3 class="note-title">vCenter PBM / SPS 服务异常排查记录</h3>
@@ -221,7 +286,7 @@
 
           <article class="note-row" data-category="平台运维" data-search="v2raya 容器部署与局域网代理使用手册 记录容器化部署、局域网代理参数，以及终端、docker 与 systemd 服务的代理配置。 平台运维 代理 docker">
             <a class="note-row-link" href="/posts/v2raya-lan-proxy.html">
-              <span class="note-index" aria-hidden="true">10</span>
+              <span class="note-index" aria-hidden="true">15</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>平台运维</strong><span>代理 · Docker</span></div>
                 <h3 class="note-title">v2rayA 容器部署与局域网代理使用手册</h3>
@@ -234,7 +299,7 @@
 
           <article class="note-row" data-category="工具方法" data-search="http 压测工具使用与结果分析手册 对比 oha 与 jmeter 的使用场景，说明并发参数、指标含义和结果分析方法。 工具方法 性能测试 oha">
             <a class="note-row-link" href="/posts/http-load-testing.html">
-              <span class="note-index" aria-hidden="true">11</span>
+              <span class="note-index" aria-hidden="true">16</span>
               <div class="note-main">
                 <div class="note-eyebrow"><strong>工具方法</strong><span>性能测试 · oha</span></div>
                 <h3 class="note-title">HTTP 压测工具使用与结果分析手册</h3>
@@ -262,7 +327,7 @@
             </select>
             <span>篇</span>
           </label>
-          <span class="page-range" id="notes-page-range">1–11 / 11</span>
+          <span class="page-range" id="notes-page-range">1–16 / 16</span>
           <div class="page-controls" id="notes-page-controls" hidden>
             <button class="page-nav" id="notes-prev-page" type="button" aria-label="上一页">←</button>
             <div class="page-numbers" id="notes-page-numbers" aria-label="页码"></div>
@@ -280,10 +345,10 @@
             </div>
           </div>
           <div class="topic-list">
-            <div class="topic-item"><span class="topic-number">01</span><strong>Kubernetes</strong><p>集群、网关、镜像仓库与权限治理</p><span class="topic-arrow">↗</span></div>
-            <div class="topic-item"><span class="topic-number">02</span><strong>MySQL</strong><p>安装迁移、主从复制与备份恢复</p><span class="topic-arrow">↗</span></div>
-            <div class="topic-item"><span class="topic-number">03</span><strong>Linux</strong><p>系统网络、安全扫描与日常维护</p><span class="topic-arrow">↗</span></div>
-            <div class="topic-item"><span class="topic-number">04</span><strong>平台与工具</strong><p>虚拟化、云存储、代理与性能测试</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">01</span><strong>可观测性</strong><p>Nightingale、Categraf、基础设施与日志链路</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">02</span><strong>Kubernetes</strong><p>集群、网络、Gateway API 与高可用</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">03</span><strong>平台运维</strong><p>vCenter、虚拟化、容器与故障复盘</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">04</span><strong>系统与工具</strong><p>Linux、Redis 与性能测试</p><span class="topic-arrow">↗</span></div>
           </div>
         </div>
       </section>

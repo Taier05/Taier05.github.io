@@ -6,9 +6,44 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260715-remove-9';
+const assetVersion = '20260715-batch-3';
 
 const posts = [
+  {
+    sourceTitle: 'Nightingale 监控平台部署与扩展采集手册',
+    title: 'Kubernetes 中部署 Nightingale 与扩展采集',
+    slug: 'nightingale-kubernetes-deployment', category: '可观测性', symbol: 'N9E',
+    summary: '使用 Helm 部署 Nightingale，比较 Prometheus 与 VictoriaMetrics 存储方案，并扩展 Kubernetes 和 Elasticsearch 指标采集。',
+    tags: ['Nightingale', 'Categraf']
+  },
+  {
+    sourceTitle: 'vSphere 监控接入与 Categraf 部署手册',
+    title: 'vSphere 监控接入与 Categraf 部署手册',
+    slug: 'vsphere-monitoring-categraf', category: '可观测性', symbol: 'VS',
+    summary: '对比 vmware_exporter 中转与 Categraf 直连两种采集链路，覆盖凭据管理、部署验证和常见故障排查。',
+    tags: ['vSphere', 'Categraf']
+  },
+  {
+    sourceTitle: 'iDRAC 指标采集部署与 Categraf 对接手册',
+    title: 'iDRAC 指标采集与 Categraf 对接手册',
+    slug: 'idrac-monitoring-categraf', category: '可观测性', symbol: 'BMC',
+    summary: '在 Kubernetes 中部署 iDRAC Exporter，通过 Categraf 批量采集服务器 BMC 指标，并说明凭据与网络安全边界。',
+    tags: ['iDRAC', 'BMC']
+  },
+  {
+    sourceTitle: 'ESXi主机磁盘SMART监控部署与接入手册',
+    title: 'ESXi 主机磁盘 SMART 监控部署手册',
+    slug: 'esxi-smart-monitoring', category: '可观测性', symbol: 'SMART',
+    summary: '通过 SSH 调用 esxcli 采集 ESXi 磁盘 SMART 信息，以 Prometheus 指标暴露并接入 Categraf。',
+    tags: ['ESXi', 'SMART']
+  },
+  {
+    sourceTitle: '网络设备SNMP监控采集部署手册',
+    title: '网络设备 SNMP 监控与 Categraf 采集手册',
+    slug: 'network-snmp-categraf', category: '可观测性', symbol: 'SNMP',
+    summary: '使用 Categraf SNMP 插件采集网络设备系统与接口指标，覆盖 OID 配置、连通性验证和采集稳定性排查。',
+    tags: ['SNMP', '网络设备']
+  },
   {
     sourceTitle: '日志链路压测与瓶颈排查操作手册',
     title: '日志链路压测与瓶颈定位操作手册',

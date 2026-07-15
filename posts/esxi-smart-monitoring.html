@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="通过 SSH 调用 esxcli 采集 ESXi 磁盘 SMART 信息，以 Prometheus 指标暴露并接入 Categraf。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>ESXi 主机磁盘 SMART 监控部署手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-3" />
+    <script src="/assets/js/main.js?v=20260715-batch-3" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">可观测性</p>
+        <h1>ESXi 主机磁盘 SMART 监控部署手册</h1>
+        <p class="article-lead">通过 SSH 调用 esxcli 采集 ESXi 磁盘 SMART 信息，以 Prometheus 指标暴露并接入 Categraf。</p>
+        <div class="article-info"><span>技术手册</span><span>约 14 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>可观测性</span><strong>SMART</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">组件说明</a>
+          <a class="toc-level-2" href="#section-3">环境说明</a>
+          <a class="toc-level-2" href="#section-4">部署流程</a>
+          <a class="toc-level-3" href="#section-5">1. 生成 SSH 密钥并配置 ESXi 免密登录</a>
+          <a class="toc-level-3" href="#section-6">2. 在 Kubernetes 中创建私钥 Secret</a>
+          <a class="toc-level-3" href="#section-7">3. 构建并推送 exporter 镜像</a>
+          <a class="toc-level-3" href="#section-8">4. 部署 exporter</a>
+          <a class="toc-level-3" href="#section-9">5. 验证 exporter</a>
+          <a class="toc-level-2" href="#section-10">指标与采集行为说明</a>
+          <a class="toc-level-2" href="#section-11">接入方案与适用场景</a>
+          <a class="toc-level-3" href="#section-12">方案一：Prometheus 直接抓取 exporter</a>
+          <a class="toc-level-3" href="#section-13">方案二：通过 Categraf 接入夜莺</a>
+          <a class="toc-level-2" href="#section-14">重要配置项</a>
+          <a class="toc-level-3" href="#section-15">主机列表配置</a>
+          <a class="toc-level-3" href="#section-16">SSH 相关配置</a>
+          <a class="toc-level-3" href="#section-17">采集周期配置</a>
+          <a class="toc-level-2" href="#section-18">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-19">1. /metrics 无数据或只有 exporter 自身指标</a>
+          <a class="toc-level-3" href="#section-20">2. 某台 ESXi esxi_smart_host_up=0</a>
+          <a class="toc-level-3" href="#section-21">3. 设备列表能获取，但 SMART 读取失败</a>
+          <a class="toc-level-3" href="#section-22">4. Categraf 部署后没有接收到指标</a>
+          <a class="toc-level-2" href="#section-23">注意事项</a>
+          <a class="toc-level-2" href="#section-24">操作速查</a>
+          <a class="toc-level-2" href="#section-25">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>安全提示：示例已移除真实 ESXi 地址和私有镜像仓库。SSH 私钥不得提交到 Git，建议使用专用采集账号或受控密钥并限制 Secret 读取权限。关闭 SSH 主机指纹校验会暴露中间人攻击风险，生产环境应预置并校验 known_hosts。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于在 Kubernetes 环境中部署 <code>esxi-smart-exporter</code>，通过 SSH 采集 ESXi 主机磁盘 SMART 信息，并以 Prometheus 指标形式暴露给监控系统。 在此基础上，可选择由 Prometheus 直接抓取 exporter，或通过 Categraf 的 <code>input.prometheus</code> 插件接入夜莺 <code>n9e</code> 体系。</p>
+<h2 id="section-2">组件说明</h2>
+<ul class="article-list">
+<li class="list-depth-0"><code>esxi_smart_exporter.py</code>：核心采集程序，定期通过 SSH 执行 <code>esxcli</code> 命令，解析设备列表与 SMART 输出，并提供 <code>/metrics</code> 与 <code>/healthz</code> 接口。</li>
+<li class="list-depth-0"><code>esxi-smart-exporter.yaml</code>：Kubernetes 部署清单，包含 <code>ConfigMap</code>、<code>Deployment</code>、<code>Service</code>。</li>
+<li class="list-depth-0"><code>categraf-esxismart.yaml</code>：Categraf 补充采集配置，用于从 exporter 拉取指标。</li>
+<li class="list-depth-0"><code>说明.sh</code>：密钥生成、镜像构建、部署与验证命令示例。</li>
+</ul>
+<h2 id="section-3">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">Kubernetes 命名空间：<code>monitoring</code></li>
+<li class="list-depth-0">exporter 默认监听端口：<code>9808</code></li>
+<li class="list-depth-0">exporter 默认采集周期：<code>300</code> 秒</li>
+<li class="list-depth-0">SSH 默认用户：<code>root</code></li>
+<li class="list-depth-0">SSH 私钥挂载路径：<code>/app/keys/id_rsa</code></li>
+<li class="list-depth-0">ESXi 主机列表文件：<code>/app/config/hosts.txt</code></li>
+</ul>
+<p>采集依赖以下 ESXi 命令：</p>
+<pre><code class="language-bash">esxcli storage core device list
+esxcli storage core device smart get -d &#39;&lt;device&gt;&#39;</code></pre>
+<p>因此目标 ESXi 主机需开启 SSH，并允许使用密钥登录。</p>
+<h2 id="section-4">部署流程</h2>
+<h3 id="section-5">1. 生成 SSH 密钥并配置 ESXi 免密登录</h3>
+<pre><code class="language-bash"># ESXI主机做免密
+ssh-keygen -t rsa -b 4096 -f ./esxi_smart_rsa -N &quot;&quot; -C &quot;esxi-smart&quot;
+# 生成：
+# ./esxi_smart_rsa        私钥
+# ./esxi_smart_rsa.pub    公钥   将公钥添加到ESXI主机的/etc/ssh/keys-root/authorized_keys上
+# 测试
+ssh -i ./esxi_smart_rsa root@&lt;ESXI_HOST_IP_2&gt;</code></pre>
+<p>完成后，将公钥写入每台 ESXi 主机的 <code>/etc/ssh/keys-root/authorized_keys</code>。</p>
+<h3 id="section-6">2. 在 Kubernetes 中创建私钥 Secret</h3>
+<pre><code class="language-bash"># 把私钥添加到kubernetes
+kubectl -n monitoring create secret generic esxi-smart-ssh-key --from-file=id_rsa=./esxi_smart_rsa</code></pre>
+<p>这里 <code>Secret</code> 中的键名必须为 <code>id_rsa</code>，因为部署清单通过：</p>
+<pre><code class="language-yaml">- name: SSH_KEY_PATH
+  value: &quot;/app/keys/id_rsa&quot;</code></pre>
+<p>明确指定了私钥文件路径。</p>
+<h3 id="section-7">3. 构建并推送 exporter 镜像</h3>
+<p>如果镜像已经存在，可跳过本节。示例 Dockerfile 如下：</p>
+<pre><code class="language-dockerfile"># esxi-smart-exporter:latest 镜像制作 Dockerfile (之前做过就可以跳过)
+FROM python:3.11-alpine
+RUN apk add --no-cache openssh-client
+WORKDIR /app
+COPY ./esxi_smart_exporter.py /app/esxi_smart_exporter.py
+EXPOSE 9808
+ENTRYPOINT [&quot;python3&quot;, &quot;/app/esxi_smart_exporter.py&quot;]</code></pre>
+<p>构建与推送命令：</p>
+<pre><code class="language-bash">cd /root/esxi-smart
+docker build -t registry.example.com/monitoring/esxi-smart-exporter:latest .
+docker push registry.example.com/monitoring/esxi-smart-exporter:latest</code></pre>
+<h3 id="section-8">4. 部署 exporter</h3>
+<p>推荐使用如下 Kubernetes 清单：</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: esxi-smart-exporter-config
+  namespace: monitoring
+data:
+  hosts.txt: |
+    &lt;ESXI_HOST_IP_1&gt;
+    &lt;ESXI_HOST_IP_2&gt;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: esxi-smart-exporter
+  namespace: monitoring
+  labels:
+    app: esxi-smart-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: esxi-smart-exporter
+  template:
+    metadata:
+      labels:
+        app: esxi-smart-exporter
+    spec:
+      containers:
+      - name: exporter
+        image: registry.example.com/monitoring/esxi-smart-exporter:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9808
+          name: metrics
+        env:
+        - name: PORT
+          value: &quot;9808&quot;
+        - name: SSH_USER
+          value: &quot;root&quot;
+        - name: SSH_KEY_PATH
+          value: &quot;/app/keys/id_rsa&quot;
+        - name: ESXI_HOSTS_FILE
+          value: &quot;/app/config/hosts.txt&quot;
+        - name: COLLECT_INTERVAL_SECONDS
+          value: &quot;300&quot;
+        - name: SSH_CONNECT_TIMEOUT_SECONDS
+          value: &quot;10&quot;
+        - name: SSH_COMMAND_TIMEOUT_SECONDS
+          value: &quot;60&quot;
+        # 如遇旧版本 ESXi 的 SSH 算法兼容问题可启用：
+        # - name: SSH_EXTRA_OPTS
+        #   value: &quot;-o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa&quot;
+        volumeMounts:
+        - name: hosts
+          mountPath: /app/config
+          readOnly: true
+        - name: ssh-key
+          mountPath: /app/keys
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 9808
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9808
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: hosts
+        configMap:
+          name: esxi-smart-exporter-config
+      - name: ssh-key
+        secret:
+          secretName: esxi-smart-ssh-key
+          defaultMode: 0400
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: esxi-smart-exporter
+  namespace: monitoring
+  labels:
+    app: esxi-smart-exporter
+spec:
+  selector:
+    app: esxi-smart-exporter
+  ports:
+  - name: metrics
+    port: 9808
+    targetPort: metrics</code></pre>
+<p>应用清单：</p>
+<pre><code class="language-bash">kubectl apply -f esxi-smart-exporter.yaml</code></pre>
+<h3 id="section-9">5. 验证 exporter</h3>
+<pre><code class="language-bash">kubectl -n monitoring port-forward svc/esxi-smart-exporter 9808:9808
+curl -s http://127.0.0.1:9808/metrics | head -n 80</code></pre>
+<p>健康检查接口：</p>
+<pre><code class="language-text">GET /healthz
+GET /-/healthy</code></pre>
+<p>指标接口：</p>
+<pre><code class="language-text">GET /metrics</code></pre>
+<h2 id="section-10">指标与采集行为说明</h2>
+<p>脚本会先读取 ESXi 主机列表，再对每台主机执行：</p>
+<ol class="article-list">
+<li class="list-depth-0"><code>esxcli storage core device list</code></li>
+<li class="list-depth-0"><code>esxcli storage core device smart get -d &#39;&lt;device&gt;&#39;</code></li>
+</ol>
+<p>脚本支持以下两类 SMART 输出格式：</p>
+<ul class="article-list">
+<li class="list-depth-0">表格模式：首列通常为 <code>Parameter</code>，后续为 <code>Value</code>、<code>Threshold</code>、<code>Worst</code>、<code>Raw</code></li>
+<li class="list-depth-0">键值模式：<code>key: value</code></li>
+</ul>
+<p>关键指标包括：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>esxi_smart_exporter_up</code>：exporter 进程状态</li>
+<li class="list-depth-0"><code>esxi_smart_exporter_hosts_total</code>：配置的 ESXi 主机总数</li>
+<li class="list-depth-0"><code>esxi_smart_exporter_collect_success</code>：最近一次采集是否完全成功</li>
+<li class="list-depth-0"><code>esxi_smart_host_up</code>：单台 ESXi 最近一次采集是否成功</li>
+<li class="list-depth-0"><code>esxi_smart_host_device_count</code>：ESXi 主机识别到的磁盘设备数量</li>
+<li class="list-depth-0"><code>esxi_smart_device_info</code>：设备基础信息，包含厂商、型号、版本等标签</li>
+<li class="list-depth-0"><code>esxi_smart_health_ok</code>：SMART 健康状态，<code>1</code> 表示正常</li>
+<li class="list-depth-0"><code>esxi_smart_temperature_celsius</code>：磁盘温度</li>
+<li class="list-depth-0"><code>esxi_smart_power_on_hours</code>：通电时长</li>
+<li class="list-depth-0"><code>esxi_smart_power_cycle_count</code>：上电次数</li>
+<li class="list-depth-0"><code>esxi_smart_reallocated_sector_count</code>：重映射扇区数</li>
+<li class="list-depth-0"><code>esxi_smart_pending_sector_reallocation_count</code>：待重映射扇区数</li>
+<li class="list-depth-0"><code>esxi_smart_uncorrectable_sector_count</code>：不可校正扇区数</li>
+</ul>
+<p>如果 SMART 原始字段不是数值，脚本会将其作为 <code>*_text_info</code> 指标标签输出，以避免直接丢失信息。</p>
+<h2 id="section-11">接入方案与适用场景</h2>
+<h3 id="section-12">方案一：Prometheus 直接抓取 exporter</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">已有 Prometheus 抓取体系</li>
+<li class="list-depth-0">不希望额外部署 Categraf 中转</li>
+<li class="list-depth-0">需要最短链路、最少组件</li>
+</ul>
+<p>特点：</p>
+<ul class="article-list">
+<li class="list-depth-0">结构更直接</li>
+<li class="list-depth-0">exporter 的 <code>/metrics</code> 可直接纳入 Prometheus 抓取目标</li>
+<li class="list-depth-0">运维面更简单</li>
+</ul>
+<h3 id="section-13">方案二：通过 Categraf 接入夜莺</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">集群已统一使用 Categraf 进行指标采集</li>
+<li class="list-depth-0">需要遵循现有夜莺接入方式</li>
+<li class="list-depth-0">希望把该采集能力纳入既有 Categraf 管理模型</li>
+</ul>
+<p>可使用如下清单：</p>
+<pre><code class="language-yaml">---
+kind: ConfigMap
+metadata:
+  name: categraf-esxismart-config
+  namespace: monitoring
+apiVersion: v1
+data:
+  prometheus.toml: |
+    [[instances]]
+    urls = [&quot;http://esxi-smart-exporter.monitoring.svc.cluster.local:9808/metrics&quot;]
+    url_label_key = &quot;instance&quot;
+    url_label_value = &quot;{{.Host}}&quot;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: categraf
+  name: categraf-esxismart
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: categraf
+  template:
+    metadata:
+      labels:
+        app: categraf
+    spec:
+      containers:
+      - env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: HOSTIP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        image: registry.example.com/monitoring/categraf:v0.4.22
+        imagePullPolicy: IfNotPresent
+        name: categraf
+        volumeMounts:
+        - mountPath: /etc/categraf/conf
+          name: categraf-config
+        - mountPath: /etc/categraf/conf/input.prometheus
+          name: categraf-esxismart-config
+      restartPolicy: Always
+      volumes:
+      - configMap:
+          name: categraf-config
+        name: categraf-config
+      - configMap:
+          name: categraf-esxismart-config
+        name: categraf-esxismart-config</code></pre>
+<p>应用清单：</p>
+<pre><code class="language-bash"># 使用categraf采集
+kubectl apply -f categraf-esxismart.yaml</code></pre>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">如果只需要把 ESXi SMART 指标暴露给 Prometheus，优先选择 Prometheus 直接抓取。</li>
+<li class="list-depth-0">如果当前夜莺环境已经规范使用 Categraf，可保留 Categraf 方案。</li>
+<li class="list-depth-0">若集群中已存在其他 <code>app: categraf</code> 工作负载，部署前应确认标签选择器不会相互影响；必要时将该 Deployment 的 <code>app</code> 标签改为独立值。</li>
+</ul>
+<h2 id="section-14">重要配置项</h2>
+<h3 id="section-15">主机列表配置</h3>
+<p>脚本支持两种主机来源：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>ESXI_HOSTS_FILE</code>：从文件按行读取，空行和 <code>#</code> 注释行会被忽略</li>
+<li class="list-depth-0"><code>ESXI_HOSTS</code>：从环境变量读取，支持逗号或空白符分隔</li>
+</ul>
+<p>在 Kubernetes 场景下，优先建议使用 <code>ConfigMap + hosts.txt</code>，更适合变更管理。</p>
+<h3 id="section-16">SSH 相关配置</h3>
+<ul class="article-list">
+<li class="list-depth-0"><code>SSH_USER</code>：默认 <code>root</code></li>
+<li class="list-depth-0"><code>SSH_PORT</code>：默认 <code>22</code></li>
+<li class="list-depth-0"><code>SSH_KEY_PATH</code>：默认脚本值为 <code>/app/keys/esxi_smart_rsa</code>，但当前部署清单已显式覆盖为 <code>/app/keys/id_rsa</code></li>
+<li class="list-depth-0"><code>SSH_CONNECT_TIMEOUT_SECONDS</code>：SSH 建连超时</li>
+<li class="list-depth-0"><code>SSH_COMMAND_TIMEOUT_SECONDS</code>：远程命令执行超时</li>
+<li class="list-depth-0"><code>SSH_EXTRA_OPTS</code>：补充 SSH 参数</li>
+</ul>
+<p>对于旧版本 ESXi，如遇 SSH 算法兼容问题，可启用以下配置：</p>
+<pre><code class="language-yaml"># 如遇旧版本 ESXi 的 SSH 算法兼容问题可启用：
+# - name: SSH_EXTRA_OPTS
+#   value: &quot;-o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa&quot;</code></pre>
+<h3 id="section-17">采集周期配置</h3>
+<p><code>COLLECT_INTERVAL_SECONDS</code> 默认为 <code>300</code> 秒。 如果主机数量较多或单次采集耗时较长，建议不要将该值设置得过低，以免 SSH 连接频繁堆积。</p>
+<h2 id="section-18">常见问题与排查</h2>
+<h3 id="section-19">1. <code>/metrics</code> 无数据或只有 exporter 自身指标</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">检查 <code>hosts.txt</code> 是否为空</li>
+<li class="list-depth-0">确认 <code>ESXI_HOSTS_FILE</code> 路径与挂载目录一致</li>
+<li class="list-depth-0">检查 <code>Secret</code> 中私钥文件名是否为 <code>id_rsa</code></li>
+<li class="list-depth-0">确认 ESXi 已启用 SSH，且公钥已写入 <code>authorized_keys</code></li>
+</ul>
+<h3 id="section-20">2. 某台 ESXi <code>esxi_smart_host_up=0</code></h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">SSH 网络连通性</li>
+<li class="list-depth-0">用户名、端口、密钥是否正确</li>
+<li class="list-depth-0">ESXi 是否限制 root SSH 登录</li>
+<li class="list-depth-0">是否触发 SSH 算法兼容问题</li>
+</ul>
+<p>如果是旧版 ESXi，可尝试启用：</p>
+<pre><code class="language-text">-o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa</code></pre>
+<h3 id="section-21">3. 设备列表能获取，但 SMART 读取失败</h3>
+<p>现象：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>esxi_smart_host_up=1</code></li>
+<li class="list-depth-0"><code>esxi_smart_device_smart_ok=0</code></li>
+<li class="list-depth-0"><code>esxi_smart_host_error{stage=&quot;smart_get&quot;}=1</code></li>
+</ul>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">指定磁盘设备是否支持 SMART</li>
+<li class="list-depth-0"><code>esxcli storage core device smart get -d &#39;&lt;device&gt;&#39;</code> 是否能在目标主机手工执行成功</li>
+<li class="list-depth-0">某些设备可能只返回键值模式或非标准内容，需结合实际输出确认</li>
+</ul>
+<h3 id="section-22">4. Categraf 部署后没有接收到指标</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认 <code>esxi-smart-exporter.monitoring.svc.cluster.local:9808</code> 能在集群内访问</li>
+<li class="list-depth-0">检查 <code>prometheus.toml</code> 是否正确挂载到 <code>/etc/categraf/conf/input.prometheus</code></li>
+<li class="list-depth-0">确认 Categraf 自身基础配置 <code>categraf-config</code> 已存在</li>
+</ul>
+<h2 id="section-23">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">exporter 通过 SSH 定时轮询 ESXi，不适合将采集周期设置过短。</li>
+<li class="list-depth-0"><code>StrictHostKeyChecking=no</code> 与 <code>UserKnownHostsFile=/dev/null</code> 便于快速落地，但会降低主机指纹校验强度，应在受控网络中使用。</li>
+<li class="list-depth-0">当无主机配置时，<code>esxi_smart_exporter_collect_success</code> 会置为 <code>0</code>，并记录 <code>no_hosts</code> 状态。</li>
+<li class="list-depth-0">当部分主机或部分磁盘采集失败时，exporter 仍会返回已有指标，但 <code>esxi_smart_exporter_collect_success</code> 可能为 <code>0</code>。</li>
+</ul>
+<h2 id="section-24">操作速查</h2>
+<pre><code class="language-bash"># 创建 SSH 密钥
+ssh-keygen -t rsa -b 4096 -f ./esxi_smart_rsa -N &quot;&quot; -C &quot;esxi-smart&quot;
+
+# 创建 Kubernetes Secret
+kubectl -n monitoring create secret generic esxi-smart-ssh-key --from-file=id_rsa=./esxi_smart_rsa
+
+# 部署 exporter
+kubectl apply -f esxi-smart-exporter.yaml
+
+# 验证 metrics
+kubectl -n monitoring port-forward svc/esxi-smart-exporter 9808:9808
+curl -s http://127.0.0.1:9808/metrics | head -n 80
+
+# 部署 Categraf 接入
+kubectl apply -f categraf-esxismart.yaml</code></pre>
+<h2 id="section-25">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://github.com/flashcatcloud/categraf/tree/main/inputs/prometheus" target="_blank" rel="noreferrer">Categraf Prometheus 插件</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

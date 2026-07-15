@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="使用 Categraf SNMP 插件采集网络设备系统与接口指标，覆盖 OID 配置、连通性验证和采集稳定性排查。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>网络设备 SNMP 监控与 Categraf 采集手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-3" />
+    <script src="/assets/js/main.js?v=20260715-batch-3" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">可观测性</p>
+        <h1>网络设备 SNMP 监控与 Categraf 采集手册</h1>
+        <p class="article-lead">使用 Categraf SNMP 插件采集网络设备系统与接口指标，覆盖 OID 配置、连通性验证和采集稳定性排查。</p>
+        <div class="article-info"><span>技术手册</span><span>约 9 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>可观测性</span><strong>SNMP</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">部署说明</a>
+          <a class="toc-level-2" href="#section-4">推荐部署清单</a>
+          <a class="toc-level-2" href="#section-5">配置要点</a>
+          <a class="toc-level-3" href="#section-6">单值指标与表格指标</a>
+          <a class="toc-level-3" href="#section-7">推荐保留的关键配置</a>
+          <a class="toc-level-2" href="#section-8">操作步骤</a>
+          <a class="toc-level-3" href="#section-9">1. 确认网络设备已开启 SNMP</a>
+          <a class="toc-level-3" href="#section-10">2. 探测网络中的 SNMP 设备</a>
+          <a class="toc-level-3" href="#section-11">3. 在内网主机验证 SNMP 返回值</a>
+          <a class="toc-level-3" href="#section-12">4. 在 Kubernetes 集群内验证采集链路</a>
+          <a class="toc-level-3" href="#section-13">5. 应用部署清单</a>
+          <a class="toc-level-2" href="#section-14">多方案与适用场景</a>
+          <a class="toc-level-3" href="#section-15">方案一：先在内网主机测试</a>
+          <a class="toc-level-3" href="#section-16">方案二：直接在 Kubernetes 集群内测试</a>
+          <a class="toc-level-3" href="#section-17">选择建议</a>
+          <a class="toc-level-2" href="#section-18">注意事项</a>
+          <a class="toc-level-2" href="#section-19">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-20">snmpwalk 无返回或超时</a>
+          <a class="toc-level-3" href="#section-21">接口流量指标缺失</a>
+          <a class="toc-level-3" href="#section-22">采集稳定性较差</a>
+          <a class="toc-level-2" href="#section-23">建议的后续优化</a>
+          <a class="toc-level-2" href="#section-24">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>安全提示：示例地址与 community 已替换为占位符。SNMP v2c 的 community 会以明文方式传输；设备支持时优先使用 SNMPv3，并通过管理网 ACL 仅允许采集器访问 UDP 161。不要在公开仓库中保存真实 community。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>本文档用于在 Kubernetes 集群中部署 <code>categraf</code> 的 SNMP 采集能力，面向交换机等网络设备采集基础系统信息、接口状态与流量计数器，并将指标纳入 <code>monitoring</code> 命名空间下的监控体系。</p>
+<p>当前方案基于 SNMP v2c，使用 <code>ConfigMap</code> 提供 <code>snmp.toml</code>，并通过独立 <code>Deployment</code> 运行采集进程。</p>
+<h2 id="section-2">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">Kubernetes 命名空间：<code>monitoring</code></li>
+<li class="list-depth-0">采集组件：<code>categraf</code></li>
+<li class="list-depth-0">镜像：<code>registry.example.com/monitoring/categraf:v0.4.22</code></li>
+<li class="list-depth-0">目标设备地址示例：<code>&lt;SNMP_TARGET_IP&gt;</code></li>
+<li class="list-depth-0">时区：<code>Asia/Shanghai</code></li>
+<li class="list-depth-0">SNMP 协议版本：<code>v2c</code></li>
+<li class="list-depth-0">Community 示例：<code>&lt;SNMP_COMMUNITY&gt;</code></li>
+</ul>
+<h2 id="section-3">部署说明</h2>
+<p>部署依赖两个配置来源：</p>
+<ul class="article-list">
+<li class="list-depth-0">已存在的通用配置：<code>categraf-config</code></li>
+<li class="list-depth-0">本文新增的 SNMP 配置：<code>categraf-snmp-config</code></li>
+</ul>
+<p>其中，<code>categraf</code> 容器挂载路径如下：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>/etc/categraf/conf</code>：通用配置</li>
+<li class="list-depth-0"><code>/etc/categraf/conf/input.snmp</code>：SNMP 输入插件配置</li>
+</ul>
+<h2 id="section-4">推荐部署清单</h2>
+<p>以下清单可直接应用。<code>snmp.toml</code> 中保留了原始配置注释，便于后续维护和调整。</p>
+<pre><code class="language-yaml">---
+kind: ConfigMap
+metadata:
+  name: categraf-snmp-config
+  namespace: monitoring
+apiVersion: v1
+data:
+  snmp.toml: |
+    # 轮询周期（秒）
+    interval = 30
+
+    [[instances]]
+    agents = [
+      &quot;udp://&lt;SNMP_TARGET_IP&gt;&quot;
+    ]
+
+    # SNMP v2c
+    version = 2
+    community = &quot;&lt;SNMP_COMMUNITY&gt;&quot;
+
+    timeout = &quot;5s&quot;
+    retries = 3
+
+    # 一次 GETBULK 拉取的对象数：有些设备有限制，建议先用默认/小一点稳定（文档建议默认10）
+    max_repetitions = 10
+
+    # 给每条指标打上设备IP标签（很关键）
+    agent_host_tag = &quot;device_ip&quot;
+
+    # 额外标签：按机房/角色/品牌分组
+    labels = { region = &quot;idc1&quot;, role = &quot;switch&quot;, brand = &quot;generic&quot; }
+
+    # --- 单值（snmpget 适合） ---
+    [[instances.field]]
+    oid = &quot;.1.3.6.1.2.1.1.3.0&quot;
+    name = &quot;uptime&quot;
+
+    [[instances.field]]
+    oid = &quot;.1.3.6.1.2.1.1.5.0&quot;
+    name = &quot;sysName&quot;
+    is_tag = true
+
+    # --- 接口表（snmpwalk 适合）：必须先有 table（可用“虚拟表”） ---
+    [[instances.table]]
+    name = &quot;interface&quot;
+    index_as_tag = true
+
+    [[instances.table.field]]
+    oid = &quot;.1.3.6.1.2.1.2.2.1.2&quot;
+    name = &quot;ifDescr&quot;
+    is_tag = true
+
+    [[instances.table.field]]
+    oid = &quot;.1.3.6.1.2.1.2.2.1.7&quot;
+    name = &quot;ifAdminStatus&quot;
+
+    [[instances.table.field]]
+    oid = &quot;.1.3.6.1.2.1.2.2.1.8&quot;
+    name = &quot;ifOperStatus&quot;
+
+    # 64位流量计数器（推荐）
+    [[instances.table.field]]
+    oid = &quot;.1.3.6.1.2.1.31.1.1.1.6&quot;
+    name = &quot;ifHCInOctets&quot;
+
+    [[instances.table.field]]
+    oid = &quot;.1.3.6.1.2.1.31.1.1.1.10&quot;
+    name = &quot;ifHCOutOctets&quot;
+
+    [[instances.table.field]]
+    oid = &quot;.1.3.6.1.2.1.31.1.1.1.15&quot;
+    name = &quot;ifHighSpeed&quot;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: categraf
+  name: categraf-snmp
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: categraf
+  template:
+    metadata:
+      labels:
+        app: categraf
+    spec:
+      containers:
+      - env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: HOSTIP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        image: registry.example.com/monitoring/categraf:v0.4.22
+        imagePullPolicy: IfNotPresent
+        name: categraf
+        volumeMounts:
+        - mountPath: /etc/categraf/conf
+          name: categraf-config
+        - mountPath: /etc/categraf/conf/input.snmp
+          name: categraf-snmp-config
+      restartPolicy: Always
+      volumes:
+      - configMap:
+          name: categraf-config
+        name: categraf-config
+      - configMap:
+          name: categraf-snmp-config
+        name: categraf-snmp-config</code></pre>
+<h2 id="section-5">配置要点</h2>
+<h3 id="section-6">单值指标与表格指标</h3>
+<ul class="article-list">
+<li class="list-depth-0"><code>uptime</code>、<code>sysName</code> 属于单值 OID，适合 <code>snmpget</code> 场景。</li>
+<li class="list-depth-0">接口类指标属于表格数据，适合 <code>snmpwalk</code> 场景。</li>
+<li class="list-depth-0">表格采集前必须定义 <code>[[instances.table]]</code>，即使只是作为“虚拟表”承载字段。</li>
+</ul>
+<h3 id="section-7">推荐保留的关键配置</h3>
+<p>适合兼顾兼容性与稳定性。部分设备对单次 <code>GETBULK</code> 返回对象数有限制，出现超时或设备兼容性问题时应优先维持较小值。</p>
+<p>用于给每条指标打上设备 IP 标签，便于多设备场景下区分来源。</p>
+<p>优先使用 64 位计数器，适合接口流量采集，优于低位计数器。</p>
+<p>建议保留为标签字段，便于展示和筛选。</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>max_repetitions = 10</code></li>
+<li class="list-depth-0"><code>agent_host_tag = &quot;device_ip&quot;</code></li>
+<li class="list-depth-0"><code>ifHCInOctets</code>、<code>ifHCOutOctets</code></li>
+<li class="list-depth-0"><code>ifDescr</code>、<code>sysName</code></li>
+</ul>
+<h2 id="section-8">操作步骤</h2>
+<h3 id="section-9">1. 确认网络设备已开启 SNMP</h3>
+<p>需要确保目标网络设备已开放 UDP <code>161</code> 端口，并已启用可访问的 SNMP community。</p>
+<h3 id="section-10">2. 探测网络中的 SNMP 设备</h3>
+<pre><code class="language-bash"># 在网路设备上开启SNMP 端口161
+# 扫描网络中的SNMP设备
+dnf -y install nmap
+nmap -sU -p 161 &lt;MANAGEMENT_CIDR&gt; --open
+nmap -sU -p 161 &lt;SNMP_TARGET_IP&gt; --open</code></pre>
+<h3 id="section-11">3. 在内网主机验证 SNMP 返回值</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">先排除设备侧配置问题</li>
+<li class="list-depth-0">尚未部署 Kubernetes 采集任务</li>
+<li class="list-depth-0">需要快速验证 community、OID 和 ACL</li>
+</ul>
+<pre><code class="language-bash"># 在内网一台设备上测试能否抓到SNMP设备   &lt;SNMP_COMMUNITY&gt;是SNMP端设置的名称
+dnf install -y net-snmp-utils
+snmpwalk -v2c -c &lt;SNMP_COMMUNITY&gt; &lt;SNMP_TARGET_IP&gt; RFC1213-MIB::sysUpTime.0
+snmpwalk -v2c -c &lt;SNMP_COMMUNITY&gt; &lt;SNMP_TARGET_IP&gt; RFC1213-MIB::sysName.0</code></pre>
+<h3 id="section-12">4. 在 Kubernetes 集群内验证采集链路</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要确认 Pod 到设备的网络可达性</li>
+<li class="list-depth-0">需要验证集群网络策略、路由或出口限制</li>
+<li class="list-depth-0">排查“宿主机可通但容器不可通”的问题</li>
+</ul>
+<pre><code class="language-bash"># 在Kubernetes集群中测试能否抓到SNMP设备
+kubectl -n monitoring run snmp-test --rm -it --image=registry.example.com/monitoring/alpine:3.22.0 -- sh -c \
+&#39;apk add --no-cache net-snmp-tools &gt;/dev/null &amp;&amp; snmpwalk -v2c -c &lt;SNMP_COMMUNITY&gt; &lt;SNMP_TARGET_IP&gt; 1.3.6.1.2.1.1.3.0&#39;</code></pre>
+<h3 id="section-13">5. 应用部署清单</h3>
+<p>将上文 YAML 保存后执行：</p>
+<pre><code class="language-bash">kubectl apply -f categraf-snmp.yaml</code></pre>
+<h2 id="section-14">多方案与适用场景</h2>
+<h3 id="section-15">方案一：先在内网主机测试</h3>
+<p>适用于设备初次接入或网络设备侧配置尚不确定的场景。优点是路径短、变量少，能快速确认 SNMP 服务本身是否可用。</p>
+<h3 id="section-16">方案二：直接在 Kubernetes 集群内测试</h3>
+<p>适用于已经明确设备 SNMP 正常，但需要确认集群网络连通性、容器运行环境、镜像工具链是否满足要求的场景。该方案更接近最终运行路径，适合上线前最终验证。</p>
+<h3 id="section-17">选择建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">设备首次接入：优先做内网主机测试，再做集群内测试。</li>
+<li class="list-depth-0">已知设备可用，仅怀疑集群网络问题：优先做集群内测试。</li>
+<li class="list-depth-0">大规模纳管前：建议两种方式都执行一次，分别验证设备侧和采集侧。</li>
+</ul>
+<h2 id="section-18">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0"><code>community = &quot;&lt;SNMP_COMMUNITY&gt;&quot;</code> 仅为示例，生产环境应替换为实际值。</li>
+<li class="list-depth-0"><code>agents</code> 当前只配置了一个设备地址；多设备场景可继续追加多个 <code>udp://IP</code>。</li>
+<li class="list-depth-0"><code>labels</code> 中的 <code>region</code>、<code>role</code>、<code>brand</code> 建议按实际机房、设备角色和厂商统一规范命名。</li>
+<li class="list-depth-0"><code>selector.matchLabels.app</code> 与 Pod 标签同为 <code>categraf</code>，若命名空间内已有同标签工作负载，部署前应确认不会产生选择器重叠风险。</li>
+<li class="list-depth-0"><code>volumeMounts</code> 依赖 <code>categraf-config</code> 已存在；若该 <code>ConfigMap</code> 缺失，Pod 将无法正常启动。</li>
+<li class="list-depth-0">SNMP 为 UDP 协议，排障时需重点关注网络 ACL、防火墙和设备侧源地址限制。</li>
+</ul>
+<h2 id="section-19">常见问题与排查</h2>
+<h3 id="section-20"><code>snmpwalk</code> 无返回或超时</h3>
+<p>优先检查以下项目：</p>
+<ul class="article-list">
+<li class="list-depth-0">设备是否启用 SNMP v2c</li>
+<li class="list-depth-0">community 是否正确</li>
+<li class="list-depth-0">设备是否允许当前来源地址访问</li>
+<li class="list-depth-0">UDP <code>161</code> 端口是否被防火墙或 ACL 拦截</li>
+<li class="list-depth-0">集群 Pod 到目标网段是否可路由</li>
+</ul>
+<h3 id="section-21">接口流量指标缺失</h3>
+<p>重点检查：</p>
+<ul class="article-list">
+<li class="list-depth-0">设备是否支持 <code>ifHCInOctets</code> 和 <code>ifHCOutOctets</code></li>
+<li class="list-depth-0">表格是否已定义 <code>[[instances.table]]</code></li>
+<li class="list-depth-0">OID 是否与目标设备实现兼容</li>
+</ul>
+<h3 id="section-22">采集稳定性较差</h3>
+<p>可按以下方向处理：</p>
+<ul class="article-list">
+<li class="list-depth-0">保持 <code>max_repetitions = 10</code>，不要盲目调大</li>
+<li class="list-depth-0">适当检查 <code>timeout = &quot;5s&quot;</code> 与 <code>retries = 3</code> 是否满足链路质量</li>
+<li class="list-depth-0">在多设备场景中按设备类型拆分实例，避免单实例承载过多不稳定目标</li>
+</ul>
+<h2 id="section-23">建议的后续优化</h2>
+<ul class="article-list">
+<li class="list-depth-0">按设备类型拆分不同 <code>instances</code>，分别维护交换机、路由器、防火墙等配置。</li>
+<li class="list-depth-0">根据设备厂商补充专有 OID，用于采集温度、电源、风扇、板卡状态等扩展指标。</li>
+<li class="list-depth-0">在标签体系中引入统一命名规范，便于后续告警和仪表盘复用。</li>
+</ul>
+<h2 id="section-24">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://flashcat.cloud/docs/content/flashcat-monitor/categraf/plugin/snmp/" target="_blank" rel="noreferrer">Categraf SNMP 插件文档</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>
