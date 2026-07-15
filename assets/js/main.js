@@ -29,7 +29,7 @@
 
   const searchInput = document.querySelector('#note-search');
   const filterButtons = [...document.querySelectorAll('.filter-button')];
-  const noteCards = [...document.querySelectorAll('.note-card')];
+  const noteCards = [...document.querySelectorAll('.note-row')];
   const resultCount = document.querySelector('#notes-result-count');
   const emptyState = document.querySelector('#notes-empty');
   const clearFilters = document.querySelector('#clear-note-filters');

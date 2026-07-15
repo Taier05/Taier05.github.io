@@ -6,6 +6,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
+const assetVersion = '20260715-list';
 
 const posts = [
   {
@@ -280,8 +281,8 @@ function articleTemplate(post, markdown) {
     <meta name="description" content="${escapeHtml(post.summary)}" />
     <meta name="theme-color" content="#f4f1e8" />
     <title>${escapeHtml(post.title)} | Yalex 的技术笔记</title>
-    <link rel="stylesheet" href="/assets/css/main.css" />
-    <script src="/assets/js/main.js" defer></script>
+    <link rel="stylesheet" href="/assets/css/main.css?v=${assetVersion}" />
+    <script src="/assets/js/main.js?v=${assetVersion}" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#article">跳到正文</a>
@@ -329,19 +330,20 @@ ${rendered.html}
 }
 
 function homeCards() {
-  return posts.map(post => {
+  return posts.map((post, index) => {
     const minutes = estimateMinutes(fs.readFileSync(path.join(contentDir, `${post.slug}.md`), 'utf8'));
-    const tags = post.tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('');
+    const tags = post.tags.map(tag => escapeHtml(tag)).join(' · ');
     const searchText = [post.title, post.summary, post.category, ...post.tags].join(' ').toLowerCase();
-    return `          <article class="note-card" data-category="${escapeHtml(post.category)}" data-search="${escapeHtml(searchText)}">
-            <a class="note-card-link" href="/posts/${post.slug}.html">
-              <span class="note-symbol" aria-hidden="true">${escapeHtml(post.symbol)}</span>
+    const number = String(index + 1).padStart(2, '0');
+    return `          <article class="note-row" data-category="${escapeHtml(post.category)}" data-search="${escapeHtml(searchText)}">
+            <a class="note-row-link" href="/posts/${post.slug}.html">
+              <span class="note-index" aria-hidden="true">${number}</span>
               <div class="note-main">
-                <div class="post-meta"><strong>${escapeHtml(post.category)}</strong><span>${minutes} 分钟</span></div>
+                <div class="note-eyebrow"><strong>${escapeHtml(post.category)}</strong><span>${tags}</span></div>
                 <h3 class="note-title">${escapeHtml(post.title)}</h3>
                 <p class="note-summary">${escapeHtml(post.summary)}</p>
-                <div class="tag-row">${tags}</div>
               </div>
+              <span class="note-time">${minutes} 分钟阅读</span>
               <span class="note-arrow" aria-hidden="true">→</span>
             </a>
           </article>`;
