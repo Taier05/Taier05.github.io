@@ -31,13 +31,6 @@ const posts = [
     tags: ['vDS', 'EtherChannel']
   },
   {
-    sourceTitle: 'Gitea部署与迁移配置手册',
-    title: 'Gitea 部署、发布与仓库迁移手册',
-    slug: 'gitea-deployment-migration', category: '平台运维', symbol: 'GIT',
-    summary: '对比 Helm 与 Docker Compose 部署方式，覆盖 Gateway API 发布、迁移白名单、安全配置和常见故障排查。',
-    tags: ['Gitea', '迁移']
-  },
-  {
     sourceTitle: 'RedisInsight 内网部署与访问控制配置手册',
     title: 'RedisInsight 内网部署与访问控制手册',
     slug: 'redisinsight-intranet', category: 'Redis', symbol: 'UI',
