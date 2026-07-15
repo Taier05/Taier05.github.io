@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Taier05 的技术博客，记录云原生、Kubernetes、Linux 与生产环境故障排查实践。"
+    />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Taier05 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/" aria-label="Taier05 的技术笔记首页">
+          <span class="brand-mark" aria-hidden="true">T5</span>
+          <span>
+            <strong>Taier05</strong>
+            <small>技术笔记</small>
+          </span>
+        </a>
+
+        <nav class="site-nav" aria-label="主导航">
+          <a class="active" href="#articles">文章</a>
+          <a href="#topics">专题</a>
+          <a href="#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题">
+          <span class="theme-icon" aria-hidden="true">◐</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero shell">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> 保持好奇，持续记录</p>
+          <h1>把复杂的系统问题，<br />写成<span>清楚的答案。</span></h1>
+          <p class="hero-intro">
+            这里记录云原生、Linux 与生产环境运维实践。重现场、重证据，也记录每一次故障背后的思考。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#articles">开始阅读 <span aria-hidden="true">→</span></a>
+            <a class="button secondary" href="#about">认识我</a>
+          </div>
+        </div>
+
+        <aside class="terminal-card" aria-label="终端风格个人简介">
+          <div class="terminal-head">
+            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+            <span>taier05@blog:~</span>
+          </div>
+          <div class="terminal-body">
+            <p><span class="prompt">$</span> whoami</p>
+            <p class="output">一名喜欢追根究底的运维工程师</p>
+            <p><span class="prompt">$</span> cat focus.txt</p>
+            <p class="output accent">Kubernetes / Linux / SRE</p>
+            <p><span class="prompt">$</span> uptime</p>
+            <p class="output">持续学习中 <span class="cursor" aria-hidden="true"></span></p>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section shell" id="articles">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">LATEST NOTES</p>
+            <h2>最近更新</h2>
+          </div>
+          <span class="section-note">从问题现场到最终结论</span>
+        </div>
+
+        <div class="article-grid">
+          <article class="post-card featured">
+            <a class="card-link" href="/posts/kubernetes-incident-review.html" aria-label="阅读文章：一次 Kubernetes Pod Pending 的完整排查"></a>
+            <div class="post-visual kubernetes-visual" aria-hidden="true">
+              <span class="visual-label">INCIDENT REVIEW</span>
+              <div class="cluster-diagram">
+                <span>Pod</span><i></i><span>Scheduler</span><i></i><span>Node</span>
+              </div>
+            </div>
+            <div class="post-content">
+              <div class="post-meta"><span>故障复盘</span><time datetime="2026-07-15">2026.07.15</time></div>
+              <h3>一次 Kubernetes Pod Pending 的完整排查</h3>
+              <p>从事件、调度器到节点资源，沿着证据链定位一个容易被忽略的配置错误。</p>
+              <div class="post-footer">
+                <span>8 分钟阅读</span>
+                <span class="read-more">阅读全文 →</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="post-card">
+            <div class="post-content compact">
+              <div class="post-meta"><span>Linux</span><time datetime="2026-07-08">2026.07.08</time></div>
+              <h3>Load 很高，CPU 却很闲：从 D 状态进程说起</h3>
+              <p>系统负载不是 CPU 使用率。理解不可中断睡眠，才能避免排查方向跑偏。</p>
+              <div class="tag-row"><span>Linux</span><span>性能分析</span></div>
+              <span class="sample-badge">样本预告</span>
+            </div>
+          </article>
+
+          <article class="post-card">
+            <div class="post-content compact">
+              <div class="post-meta"><span>可观测性</span><time datetime="2026-06-26">2026.06.26</time></div>
+              <h3>生产告警的减法：怎样让每一条告警都值得响应</h3>
+              <p>从信号质量、持续时间和行动指引三个角度，重新审视告警规则。</p>
+              <div class="tag-row"><span>Prometheus</span><span>SRE</span></div>
+              <span class="sample-badge">样本预告</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="topics-section" id="topics">
+        <div class="shell">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">TOPICS</p>
+              <h2>持续关注</h2>
+            </div>
+          </div>
+          <div class="topic-list">
+            <div class="topic-item"><span class="topic-number">01</span><strong>Kubernetes</strong><p>调度、网络、存储与故障复盘</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">02</span><strong>Linux</strong><p>性能、网络与系统疑难问题</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">03</span><strong>可观测性</strong><p>日志、指标、链路与告警治理</p><span class="topic-arrow">↗</span></div>
+            <div class="topic-item"><span class="topic-number">04</span><strong>工程效率</strong><p>自动化、工具链与工作方法</p><span class="topic-arrow">↗</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="about shell" id="about">
+        <div class="about-mark" aria-hidden="true">T5</div>
+        <div class="about-copy">
+          <p class="section-kicker">ABOUT THIS BLOG</p>
+          <h2>记录，是为了把经验变成可以复用的方法。</h2>
+          <p>
+            这个博客用于整理真实工作中的技术问题与解决思路。文章会尽量交代背景、证据、判断过程和验证方式，而不只是给出一条命令。
+          </p>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">在 GitHub 上找到我 <span>↗</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <p>© <span id="current-year">2026</span> Taier05. 写给未来的自己，也分享给正在排障的你。</p>
+        <a href="#main">回到顶部 ↑</a>
+      </div>
+    </footer>
+  </body>
+</html>
