@@ -329,28 +329,21 @@ ${rendered.html}
 }
 
 function homeCards() {
-  return posts.map((post, index) => {
+  return posts.map(post => {
     const minutes = estimateMinutes(fs.readFileSync(path.join(contentDir, `${post.slug}.md`), 'utf8'));
     const tags = post.tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('');
-    if (index === 0) {
-      return `          <article class="post-card featured">
-            <a class="card-link" href="/posts/${post.slug}.html" aria-label="阅读文章：${escapeHtml(post.title)}"></a>
-            <div class="post-visual note-visual" aria-hidden="true"><span class="visual-label">TECHNICAL HANDBOOK</span><strong>${escapeHtml(post.symbol)}</strong><small>${escapeHtml(post.category)}</small></div>
-            <div class="post-content">
-              <div class="post-meta"><span>${escapeHtml(post.category)}</span><span>技术手册</span></div>
-              <h3>${escapeHtml(post.title)}</h3><p>${escapeHtml(post.summary)}</p>
-              <div class="post-footer"><span>${minutes} 分钟阅读</span><span class="read-more">阅读全文 →</span></div>
-            </div>
-          </article>`;
-    }
-    return `          <article class="post-card">
-            <a class="card-link" href="/posts/${post.slug}.html" aria-label="阅读文章：${escapeHtml(post.title)}"></a>
-            <div class="post-content compact">
-              <div class="post-meta"><span>${escapeHtml(post.category)}</span><span>技术手册</span></div>
-              <h3>${escapeHtml(post.title)}</h3><p>${escapeHtml(post.summary)}</p>
-              <div class="tag-row">${tags}</div>
-              <div class="post-footer"><span>${minutes} 分钟阅读</span><span class="read-more">阅读全文 →</span></div>
-            </div>
+    const searchText = [post.title, post.summary, post.category, ...post.tags].join(' ').toLowerCase();
+    return `          <article class="note-card" data-category="${escapeHtml(post.category)}" data-search="${escapeHtml(searchText)}">
+            <a class="note-card-link" href="/posts/${post.slug}.html">
+              <span class="note-symbol" aria-hidden="true">${escapeHtml(post.symbol)}</span>
+              <div class="note-main">
+                <div class="post-meta"><strong>${escapeHtml(post.category)}</strong><span>${minutes} 分钟</span></div>
+                <h3 class="note-title">${escapeHtml(post.title)}</h3>
+                <p class="note-summary">${escapeHtml(post.summary)}</p>
+                <div class="tag-row">${tags}</div>
+              </div>
+              <span class="note-arrow" aria-hidden="true">→</span>
+            </a>
           </article>`;
   }).join('\n\n');
 }
