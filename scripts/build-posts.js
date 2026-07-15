@@ -6,7 +6,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260715-batch-2';
+const assetVersion = '20260715-remove-9';
 
 const posts = [
   {
@@ -59,60 +59,11 @@ const posts = [
     tags: ['Gateway API', 'NGINX']
   },
   {
-    sourceTitle: 'Kubernetes Ingress-Nginx 部署与日志配置手册',
-    title: 'Ingress-Nginx 部署与访问日志配置手册',
-    slug: 'ingress-nginx-deployment-logging', category: 'Kubernetes', symbol: 'ING',
-    summary: '对比两种部署方式，并说明 NodePort 暴露、日志格式调整与变更验证方法。',
-    tags: ['Ingress', '日志']
-  },
-  {
-    sourceTitle: 'Kubernetes 环境 Harbor 私有镜像仓库部署与访问说明',
-    title: '在 Kubernetes 中部署 Harbor 私有镜像仓库',
-    slug: 'harbor-on-kubernetes', category: 'Kubernetes', symbol: 'HBR',
-    summary: '使用 Helm 部署 Harbor，配置 TLS、Ingress 与 NodePort，并完成镜像推送验证。',
-    tags: ['Harbor', '镜像仓库']
-  },
-  {
-    sourceTitle: 'Headlamp 多集群只读接入与发布手册',
-    title: 'Headlamp 多集群只读接入与发布手册',
-    slug: 'headlamp-multi-cluster-readonly', category: 'Kubernetes', symbol: 'HLM',
-    summary: '通过最小权限 RBAC 和多集群 kubeconfig，为 Headlamp 建立安全的只读管理入口。',
-    tags: ['Headlamp', 'RBAC']
-  },
-  {
-    sourceTitle: 'MySQL GTID主从复制部署与故障处理手册',
-    title: 'MySQL GTID 主从复制部署与故障处理手册',
-    slug: 'mysql-gtid-replication', category: 'MySQL', symbol: 'SQL',
-    summary: '覆盖 GTID 复制配置、初始同步、状态验证，以及常见复制中断的处理思路。',
-    tags: ['GTID', '主从复制']
-  },
-  {
-    sourceTitle: 'MySQL备份与恢复操作手册',
-    title: 'MySQL 备份与恢复操作手册',
-    slug: 'mysql-backup-restore', category: 'MySQL', symbol: 'BAK',
-    summary: '对比 mysqldump 与 XtraBackup 的适用场景，整理备份、恢复和完整性验证步骤。',
-    tags: ['备份', '恢复']
-  },
-  {
-    sourceTitle: 'MySQL 8.0 RPM 安装与数据目录迁移操作手册',
-    title: 'MySQL 8.0 RPM 安装与数据目录迁移手册',
-    slug: 'mysql-8-rpm-data-migration', category: 'MySQL', symbol: '8.0',
-    summary: '记录 RPM 安装、初始化、安全配置，以及数据目录迁移与回滚检查方法。',
-    tags: ['安装', '数据迁移']
-  },
-  {
     sourceTitle: 'Linux网卡Bond绑定配置与维护手册',
     title: 'Linux 网卡 Bond 配置与维护手册',
     slug: 'linux-bond', category: 'Linux', symbol: 'BND',
     summary: '说明常用 Bond 模式、NetworkManager 配置流程，以及切换和故障验证方法。',
     tags: ['网络', 'Bond']
-  },
-  {
-    sourceTitle: 'Linux服务器病毒扫描与KVRT使用说明',
-    title: 'Linux 服务器病毒扫描与 KVRT 使用说明',
-    slug: 'linux-kvrt-virus-scan', category: 'Linux', symbol: 'SEC',
-    summary: '整理 KVRT 下载、执行、扫描结果解读与生产环境使用时的安全注意事项。',
-    tags: ['安全', 'KVRT']
   },
   {
     sourceTitle: 'vCenter 创建虚拟机报 PBM / Profile-Driven Storage Service 错误处理记录',
@@ -122,25 +73,11 @@ const posts = [
     tags: ['vCenter', '故障复盘']
   },
   {
-    sourceTitle: 'RedisInsight 内网部署与访问控制配置手册',
-    title: 'RedisInsight 内网部署与访问控制手册',
-    slug: 'redisinsight-intranet', category: '平台运维', symbol: 'RDS',
-    summary: '通过 Docker Compose 部署 RedisInsight，并使用 Nginx 基础认证收紧访问边界。',
-    tags: ['Redis', '访问控制']
-  },
-  {
     sourceTitle: 'v2rayA容器部署与局域网代理使用手册',
     title: 'v2rayA 容器部署与局域网代理使用手册',
     slug: 'v2raya-lan-proxy', category: '平台运维', symbol: 'NET',
     summary: '记录容器化部署、局域网代理参数，以及终端、Docker 与 systemd 服务的代理配置。',
     tags: ['代理', 'Docker']
-  },
-  {
-    sourceTitle: '阿里云 OSS 文件传输与备份操作手册',
-    title: '阿里云 OSS 文件传输与备份操作手册',
-    slug: 'aliyun-oss-backup', category: '平台运维', symbol: 'OSS',
-    summary: '使用 ossutil 完成大文件上传、下载、校验和定期备份，并说明内外网 Endpoint 选择。',
-    tags: ['阿里云', '备份']
   },
   {
     sourceTitle: 'HTTP压测工具使用与结果分析手册',
