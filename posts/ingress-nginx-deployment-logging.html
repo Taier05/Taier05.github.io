@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="对比两种部署方式，并说明 NodePort 暴露、日志格式调整与变更验证方法。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Ingress-Nginx 部署与访问日志配置手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Kubernetes</p>
+        <h1>Ingress-Nginx 部署与访问日志配置手册</h1>
+        <p class="article-lead">对比两种部署方式，并说明 NodePort 暴露、日志格式调整与变更验证方法。</p>
+        <div class="article-info"><span>技术手册</span><span>约 5 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-kubernetes" aria-hidden="true">
+        <div class="article-cover-inner"><span>KUBERNETES</span><strong>ING</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">部署方式</a>
+          <a class="toc-level-3" href="#section-4">方案一：直接使用官方清单部署</a>
+          <a class="toc-level-3" href="#section-5">方案二：下载清单后按需修改再部署</a>
+          <a class="toc-level-2" href="#section-6">Service 暴露方式调整</a>
+          <a class="toc-level-3" href="#section-7">NodePort 场景的推荐修改</a>
+          <a class="toc-level-2" href="#section-8">日志格式配置</a>
+          <a class="toc-level-2" href="#section-9">推荐操作步骤</a>
+          <a class="toc-level-2" href="#section-10">注意事项</a>
+          <a class="toc-level-2" href="#section-11">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-12">无法直接执行官方安装命令</a>
+          <a class="toc-level-3" href="#section-13">Service 改为 NodePort 后仍无法访问</a>
+          <a class="toc-level-3" href="#section-14">日志未按 JSON 输出</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">背景与目标</h2>
+<p>Ingress-Nginx 是 Kubernetes 集群中常用的 Ingress Controller，可用于统一接入 HTTP/HTTPS 流量、暴露集群内服务，并提供可观测的访问日志能力。本文记录基于官方清单部署 Ingress-Nginx、在非云负载均衡场景下调整 Service 暴露方式，以及配置结构化访问日志的推荐做法。</p>
+<h2 id="section-2">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">Kubernetes 集群已可正常访问</li>
+<li class="list-depth-0">已安装 <code>kubectl</code>，且当前上下文具备集群管理权限</li>
+<li class="list-depth-0">目标命名空间为 <code>ingress-nginx</code></li>
+<li class="list-depth-0">官方部署版本示例为 <code>controller-v1.14.0</code></li>
+</ul>
+<h2 id="section-3">部署方式</h2>
+<h3 id="section-4">方案一：直接使用官方清单部署</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">集群可直接访问 GitHub 原始内容</li>
+<li class="list-depth-0">采用官方默认部署方式，后续仅做少量调整</li>
+</ul>
+<p>执行命令：</p>
+<pre><code class="language-bash">kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.14.0/deploy/static/provider/cloud/deploy.yaml</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">该方式部署简单，适合快速安装和标准化环境。</li>
+<li class="list-depth-0">如果网络受限或镜像拉取存在障碍，应先下载 YAML，在本地修改镜像地址后再执行部署。</li>
+</ul>
+<h3 id="section-5">方案二：下载清单后按需修改再部署</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">受网络限制，无法直接拉取官方镜像或远程 YAML</li>
+<li class="list-depth-0">需要提前调整镜像源、Service 类型或其他控制器参数</li>
+</ul>
+<p>建议做法：</p>
+<ol class="article-list">
+<li class="list-depth-0">先下载官方部署清单。</li>
+<li class="list-depth-0">按实际环境替换镜像地址。</li>
+<li class="list-depth-0">如无云厂商 LoadBalancer，提前将控制器 Service 调整为 <code>NodePort</code>。</li>
+<li class="list-depth-0">完成修改后再执行 <code>kubectl apply -f &lt;本地文件&gt;</code>。</li>
+</ol>
+<h2 id="section-6">Service 暴露方式调整</h2>
+<h3 id="section-7">NodePort 场景的推荐修改</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">裸机集群</li>
+<li class="list-depth-0">私有化环境</li>
+<li class="list-depth-0">无可用云负载均衡器</li>
+</ul>
+<p>修改命令：</p>
+<pre><code class="language-bash">kubectl edit svc ingress-nginx-controller -n ingress-nginx</code></pre>
+<p>重点调整项：</p>
+<pre><code class="language-yaml">spec:
+  externalTrafficPolicy: Cluster
+  type: NodePort</code></pre>
+<p>对应关系如下：</p>
+<ul class="article-list">
+<li class="list-depth-0">将 <code>type: LoadBalancer</code> 调整为 <code>type: NodePort</code></li>
+<li class="list-depth-0">将 <code>externalTrafficPolicy: Local</code> 调整为 <code>externalTrafficPolicy: Cluster</code></li>
+</ul>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>NodePort</code> 适合没有外部负载均衡能力的环境，部署成本更低，但通常需要结合上层四层负载均衡、反向代理或节点 IP 直接访问。</li>
+<li class="list-depth-0"><code>LoadBalancer</code> 更适合云环境，能直接对外提供统一入口；若集群具备稳定的 LB 能力，优先保留官方默认方式。</li>
+<li class="list-depth-0"><code>externalTrafficPolicy: Cluster</code> 更利于在 NodePort 模式下保证流量转发可用性；如果业务明确依赖保留客户端源 IP，则需要结合网络拓扑重新评估是否使用 <code>Local</code>。</li>
+</ul>
+<h2 id="section-8">日志格式配置</h2>
+<p>为便于日志平台采集、检索和结构化分析，建议将 Ingress-Nginx 访问日志调整为 JSON 格式。</p>
+<p>编辑 ConfigMap：</p>
+<pre><code class="language-bash">kubectl edit cm -n ingress-nginx ingress-nginx-controller</code></pre>
+<p>推荐配置：</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  log-format-escape-json: &quot;true&quot;
+  log-format-upstream: &gt;-
+    {&quot;timestamp&quot;:&quot;$time_iso8601&quot;,&quot;domain&quot;:&quot;$server_name&quot;,&quot;hostname&quot;:&quot;$hostname&quot;,&quot;remote_user&quot;:&quot;$remote_user&quot;,&quot;clientip&quot;:&quot;$remote_addr&quot;,&quot;proxy_protocol_addr&quot;:&quot;$proxy_protocol_addr&quot;,&quot;@source&quot;:&quot;$server_addr&quot;,&quot;host&quot;:&quot;$http_host&quot;,&quot;request&quot;:&quot;$request&quot;,&quot;args&quot;:&quot;$args&quot;,&quot;upstreamaddr&quot;:&quot;$upstream_addr&quot;,&quot;status&quot;:&quot;$status&quot;,&quot;upstream_status&quot;:&quot;$upstream_status&quot;,&quot;bytes&quot;:&quot;$body_bytes_sent&quot;,&quot;responsetime&quot;:&quot;$request_time&quot;,&quot;upstreamtime&quot;:&quot;$upstream_response_time&quot;,&quot;proxy_upstream_name&quot;:&quot;$proxy_upstream_name&quot;,&quot;x_forwarded&quot;:&quot;$http_x_forwarded_for&quot;,&quot;upstream_response_length&quot;:&quot;$upstream_response_length&quot;,&quot;referer&quot;:&quot;$http_referer&quot;,&quot;user_agent&quot;:&quot;$http_user_agent&quot;,&quot;request_length&quot;:&quot;$request_length&quot;,&quot;request_method&quot;:&quot;$request_method&quot;,&quot;scheme&quot;:&quot;$scheme&quot;,&quot;k8s_ingress_name&quot;:&quot;$ingress_name&quot;,&quot;k8s_service_name&quot;:&quot;$service_name&quot;,&quot;k8s_service_port&quot;:&quot;$service_port&quot;}</code></pre>
+<p>字段说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>timestamp</code>：请求时间</li>
+<li class="list-depth-0"><code>domain</code>、<code>host</code>：请求域名信息</li>
+<li class="list-depth-0"><code>clientip</code>：客户端地址</li>
+<li class="list-depth-0"><code>request</code>、<code>request_method</code>、<code>args</code>：请求内容</li>
+<li class="list-depth-0"><code>status</code>、<code>upstream_status</code>：网关层和上游响应状态</li>
+<li class="list-depth-0"><code>responsetime</code>、<code>upstreamtime</code>：总耗时和上游耗时</li>
+<li class="list-depth-0"><code>k8s_ingress_name</code>、<code>k8s_service_name</code>、<code>k8s_service_port</code>：关联的 Kubernetes 资源信息</li>
+</ul>
+<h2 id="section-9">推荐操作步骤</h2>
+<ol class="article-list">
+<li class="list-depth-0">根据网络环境选择直接部署或下载后修改部署。</li>
+<li class="list-depth-0">完成安装后，确认 <code>ingress-nginx-controller</code> Pod 处于 <code>Running</code> 状态。</li>
+<li class="list-depth-0">若环境不支持 <code>LoadBalancer</code>，立即将 Service 改为 <code>NodePort</code>。</li>
+<li class="list-depth-0">配置 JSON 日志格式，便于后续接入日志系统。</li>
+<li class="list-depth-0">变更后检查控制器是否正确加载配置，并验证访问日志输出格式。</li>
+</ol>
+<h2 id="section-10">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">使用远程 YAML 安装时，应确认版本与集群兼容，避免盲目升级控制器版本。</li>
+<li class="list-depth-0">修改 Service 类型后，外部访问方式会改变，需要同步调整访问入口、DNS、负载均衡或安全组策略。</li>
+<li class="list-depth-0">如果集群处于受限网络环境，镜像地址和 YAML 获取方式应提前准备，避免部署过程中断。</li>
+<li class="list-depth-0">JSON 日志格式依赖正确转义，<code>log-format-escape-json: &quot;true&quot;</code> 不应省略。</li>
+</ul>
+<h2 id="section-11">常见问题与排查</h2>
+<h3 id="section-12">无法直接执行官方安装命令</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">检查集群节点是否能访问 GitHub 原始内容地址</li>
+<li class="list-depth-0">检查镜像仓库是否可拉取官方镜像</li>
+<li class="list-depth-0">必要时改为下载 YAML 后替换镜像地址再部署</li>
+</ul>
+<h3 id="section-13">Service 改为 NodePort 后仍无法访问</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认 <code>ingress-nginx-controller</code> Service 已分配 NodePort</li>
+<li class="list-depth-0">确认节点防火墙、安全组、上层负载均衡配置已放通对应端口</li>
+<li class="list-depth-0">确认 Ingress 规则、后端 Service 和 Pod 均正常</li>
+</ul>
+<h3 id="section-14">日志未按 JSON 输出</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认修改的是 <code>ingress-nginx-controller</code> 对应 ConfigMap</li>
+<li class="list-depth-0">确认 <code>log-format-upstream</code> 内容未被错误换行或截断</li>
+<li class="list-depth-0">检查控制器是否已重新加载配置</li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

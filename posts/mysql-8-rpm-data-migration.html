@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="记录 RPM 安装、初始化、安全配置，以及数据目录迁移与回滚检查方法。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>MySQL 8.0 RPM 安装与数据目录迁移手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">MySQL</p>
+        <h1>MySQL 8.0 RPM 安装与数据目录迁移手册</h1>
+        <p class="article-lead">记录 RPM 安装、初始化、安全配置，以及数据目录迁移与回滚检查方法。</p>
+        <div class="article-info"><span>技术手册</span><span>约 7 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-mysql" aria-hidden="true">
+        <div class="article-cover-inner"><span>MYSQL</span><strong>8.0</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">安装前准备</a>
+          <a class="toc-level-2" href="#section-4">数据目录与配置准备</a>
+          <a class="toc-level-2" href="#section-5">初始化数据库</a>
+          <a class="toc-level-2" href="#section-6">启动与设置开机自启</a>
+          <a class="toc-level-2" href="#section-7">首次登录与基础安全配置</a>
+          <a class="toc-level-2" href="#section-8">数据目录迁移方案</a>
+          <a class="toc-level-2" href="#section-9">重新初始化方案</a>
+          <a class="toc-level-2" href="#section-10">高权限远程账号创建</a>
+          <a class="toc-level-2" href="#section-11">推荐实施顺序</a>
+          <a class="toc-level-3" href="#section-12">新服务器首次部署</a>
+          <a class="toc-level-3" href="#section-13">已有实例迁移数据目录</a>
+          <a class="toc-level-3" href="#section-14">空实例重建</a>
+          <a class="toc-level-2" href="#section-15">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-16">服务无法启动</a>
+          <a class="toc-level-3" href="#section-17">初始化后无法登录</a>
+          <a class="toc-level-3" href="#section-18">修改数据目录后启动异常</a>
+          <a class="toc-level-2" href="#section-19">注意事项</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于在基于 EL8 的 Linux 环境中，通过 RPM Bundle 方式安装 MySQL 8.0，完成数据库初始化、服务启停、自定义数据目录配置，以及在必要时执行数据目录迁移、重新初始化和高权限账号创建。</p>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">服务器无法直接使用在线仓库，需要手动下载 RPM 安装包</li>
+<li class="list-depth-0">需要将 MySQL 数据目录放置到独立磁盘或自定义路径，例如 <code>/MysqlData/mysqldata</code></li>
+<li class="list-depth-0">需要对新实例进行初始化，或对已有实例重新初始化</li>
+</ul>
+<h2 id="section-2">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">操作系统：EL8 系列发行版</li>
+<li class="list-depth-0">安装方式：MySQL 官方 RPM Bundle 离线安装</li>
+<li class="list-depth-0">依赖工具：<code>dnf</code>、<code>tar</code>、<code>systemctl</code></li>
+</ul>
+<p>官方 RPM 下载归档地址：</p>
+<pre><code class="language-text">https://downloads.mysql.com/archives/community/</code></pre>
+<p>示例安装包：</p>
+<pre><code class="language-text">mysql-8.0.36-1.el8.x86_64.rpm-bundle.tar</code></pre>
+<h2 id="section-3">安装前准备</h2>
+<p>先安装依赖包：</p>
+<pre><code class="language-bash"># 安装依赖包
+dnf install -y libaio</code></pre>
+<p>下载 RPM Bundle 后解压到本地目录：</p>
+<pre><code class="language-bash"># 解压安装包
+mkdir mysql-install
+tar xvf mysql-8.0.36-1.el8.x86_64.rpm-bundle.tar -C mysql-install</code></pre>
+<p>安装前建议先检查系统中是否已有旧版 MySQL 相关组件，避免包冲突：</p>
+<pre><code class="language-bash"># 安装
+rpm -qa | grep -i mysql # 检查是否已经安装过mysql
+dnf install -y --allowerasing mysql-install/mysql-community-*.rpm</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>--allowerasing</code> 用于处理已有冲突包的替换场景</li>
+<li class="list-depth-0">如果环境中已存在 MariaDB 或旧版 MySQL，执行安装前应确认兼容性及数据保留策略</li>
+</ul>
+<h2 id="section-4">数据目录与配置准备</h2>
+<p>默认情况下 MySQL 使用系统默认数据目录。若计划使用自定义目录，例如 <code>/MysqlData/mysqldata</code>，建议在初始化前完成目录创建与授权。</p>
+<pre><code class="language-bash"># 修改配置
+vim /etc/my.cnf
+# 如果指定的数据目录为/MysqlData/mysqldata，则先创建好：
+mkdir -p /MysqlData/mysqldata
+chown -R mysql:mysql /MysqlData/mysqldata
+chmod -R 755 /MysqlData/mysqldata</code></pre>
+<p>推荐在 <code>/etc/my.cnf</code> 中至少确认以下内容与实际目录一致：</p>
+<pre><code class="language-ini">[mysqld]
+datadir=/MysqlData/mysqldata
+socket=/var/lib/mysql/mysql.sock</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>datadir</code> 必须与实际初始化目录一致</li>
+<li class="list-depth-0">如果使用了自定义 socket、log、pid 路径，也需要同步检查目录权限</li>
+</ul>
+<h2 id="section-5">初始化数据库</h2>
+<p>在确认目录已创建、权限正确、配置已生效后，执行初始化：</p>
+<pre><code class="language-bash"># 初始化数据库
+mysqld --initialize --user=mysql --datadir=/MysqlData/mysqldata  # 提前创建好/MysqlData/mysqldata目录
+#注意：这会生成一个临时 root 密码，记录日志中显示的密码</code></pre>
+<p>注意事项：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>--initialize</code> 会生成系统表并创建临时 <code>root</code> 密码</li>
+<li class="list-depth-0">临时密码通常可从 MySQL 日志中获取，后续首次登录必须先修改密码</li>
+<li class="list-depth-0">初始化目录必须为空目录；若目录中已有旧数据文件，初始化通常会失败</li>
+</ul>
+<h2 id="section-6">启动与设置开机自启</h2>
+<p>初始化完成后启动服务：</p>
+<pre><code class="language-bash"># 启动服务
+systemctl start mysqld
+systemctl enable mysqld
+systemctl status mysqld</code></pre>
+<p>如果启动失败，优先检查以下内容：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>/etc/my.cnf</code> 中的 <code>datadir</code> 是否与实际目录一致</li>
+<li class="list-depth-0">数据目录属主属组是否为 <code>mysql:mysql</code></li>
+<li class="list-depth-0">目录权限是否允许 MySQL 进程访问</li>
+<li class="list-depth-0">初始化是否已成功完成</li>
+</ul>
+<h2 id="section-7">首次登录与基础安全配置</h2>
+<p>使用初始化生成的临时密码登录：</p>
+<pre><code class="language-bash"># 配置数据库
+mysql -u root -p
+ALTER USER &#39;root&#39;@&#39;localhost&#39; IDENTIFIED BY &#39;&lt;DB_PASSWORD&gt;&#39;; # 修改root密码才能下一步操作
+set global validate_password.policy=0; # 关闭密码复杂度验证
+set global validate_password.length=1; # 密码长度限制</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">首次登录后，必须先执行 <code>ALTER USER</code> 修改 <code>root</code> 密码，否则后续操作可能被拒绝</li>
+<li class="list-depth-0"><code>validate_password.policy=0</code> 与 <code>validate_password.length=1</code> 适用于测试、临时环境或需要兼容弱密码策略的场景</li>
+</ul>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">生产环境：不建议关闭密码复杂度校验，也不建议将密码长度限制设为 1</li>
+<li class="list-depth-0">测试环境：可临时使用上述策略，但应明确访问边界并做好网络限制</li>
+</ul>
+<h2 id="section-8">数据目录迁移方案</h2>
+<p>当 MySQL 已安装并运行，但需要将数据目录迁移到新路径时，可采用以下方式。</p>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">原磁盘空间不足</li>
+<li class="list-depth-0">需要迁移到独立数据盘</li>
+<li class="list-depth-0">需要统一目录规划</li>
+</ul>
+<p>操作步骤：</p>
+<pre><code class="language-bash"># 如果需要更改数据目录
+systemctl stop mysqld
+cp -r /var/lib/mysql/* /MysqlData/mysqldata/
+chown -R mysql:mysql /MysqlData/mysqldata
+chmod -R 755 /MysqlData/mysqldata
+systemctl start mysqld</code></pre>
+<p>补充建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">执行迁移前，应先在 <code>/etc/my.cnf</code> 中将 <code>datadir</code> 调整为新目录</li>
+<li class="list-depth-0">迁移完成后再启动服务，避免仍指向旧目录</li>
+<li class="list-depth-0">若环境启用了 SELinux，还需同步处理新目录的安全上下文</li>
+<li class="list-depth-0">生产环境建议优先使用保留权限与属性的复制方式，例如 <code>rsync -a</code> 或 <code>cp -a</code>；当前命令适合简单场景</li>
+</ul>
+<h2 id="section-9">重新初始化方案</h2>
+<p>当实例需要彻底重建时，可以执行重新初始化流程。</p>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">初始化失败且目录状态已混乱</li>
+<li class="list-depth-0">当前实例无需保留原始数据</li>
+<li class="list-depth-0">需要重建一个全新的空实例</li>
+</ul>
+<p>操作步骤：</p>
+<pre><code class="language-bash"># 如果需要重新初始化
+systemctl stop mysqld
+cp -r /MysqlData/mysqldata /MysqlData/mysqldata_backup
+rm -rf /MysqlData/mysqldata/*
+配置好/etc/my.cnf
+mysqld --initialize --user=mysql --datadir=/MysqlData/mysqldata #注意：这会生成一个临时 root 密码，记录日志中显示的密码
+systemctl start mysqld</code></pre>
+<p>注意事项：</p>
+<ul class="article-list">
+<li class="list-depth-0">执行 <code>rm -rf /MysqlData/mysqldata/*</code> 前，必须确认备份已完成且当前目录路径无误</li>
+<li class="list-depth-0">重新初始化会导致原实例中的库、表、用户、授权信息全部失效</li>
+<li class="list-depth-0">若只是迁移目录，不应执行重新初始化</li>
+</ul>
+<h2 id="section-10">高权限远程账号创建</h2>
+<p>如需创建具备全局权限的远程管理账号，可执行以下语句：</p>
+<pre><code class="language-sql"># 创建大权限账号-可选
+create user &#39;app_admin&#39;@&#39;%&#39; identified by &#39;&lt;DB_PASSWORD&gt;&#39;;
+grant all on *.* to &#39;app_admin&#39;@&#39;%&#39; WITH GRANT OPTION;
+flush privileges;</code></pre>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">运维管理平台需要远程接入</li>
+<li class="list-depth-0">临时排障需要跨主机登录管理</li>
+</ul>
+<p>风险说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>&#39;%&#39;</code> 表示允许任意来源地址连接，暴露面较大</li>
+<li class="list-depth-0"><code>WITH GRANT OPTION</code> 允许该账号继续向其他账号授予权限，风险较高</li>
+</ul>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">生产环境建议限制来源地址，例如指定堡垒机网段或运维节点 IP</li>
+<li class="list-depth-0">非必要情况下，不建议授予 <code>WITH GRANT OPTION</code></li>
+</ul>
+<h2 id="section-11">推荐实施顺序</h2>
+<h3 id="section-12">新服务器首次部署</h3>
+<ol class="article-list">
+<li class="list-depth-0">下载 RPM Bundle 并安装 <code>libaio</code></li>
+<li class="list-depth-0">解压并安装 MySQL RPM 包</li>
+<li class="list-depth-0">配置 <code>/etc/my.cnf</code></li>
+<li class="list-depth-0">创建并授权数据目录</li>
+<li class="list-depth-0">执行初始化</li>
+<li class="list-depth-0">启动并设置开机自启</li>
+<li class="list-depth-0">使用临时密码登录并修改 <code>root</code> 密码</li>
+<li class="list-depth-0">根据环境策略决定是否调整密码复杂度</li>
+</ol>
+<h3 id="section-13">已有实例迁移数据目录</h3>
+<ol class="article-list">
+<li class="list-depth-0">停止 MySQL 服务</li>
+<li class="list-depth-0">修改 <code>/etc/my.cnf</code> 中的 <code>datadir</code></li>
+<li class="list-depth-0">将旧目录数据复制到新目录</li>
+<li class="list-depth-0">修正属主属组和权限</li>
+<li class="list-depth-0">启动服务并验证实例状态</li>
+</ol>
+<h3 id="section-14">空实例重建</h3>
+<ol class="article-list">
+<li class="list-depth-0">停止 MySQL 服务</li>
+<li class="list-depth-0">备份原数据目录</li>
+<li class="list-depth-0">清空目标数据目录</li>
+<li class="list-depth-0">确认 <code>/etc/my.cnf</code></li>
+<li class="list-depth-0">重新执行初始化</li>
+<li class="list-depth-0">启动服务并重新完成密码设置</li>
+</ol>
+<h2 id="section-15">常见问题与排查</h2>
+<h3 id="section-16">服务无法启动</h3>
+<p>重点检查：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>systemctl status mysqld</code></li>
+<li class="list-depth-0">数据目录是否存在且为空或已完整迁移</li>
+<li class="list-depth-0"><code>mysql:mysql</code> 权限是否正确</li>
+<li class="list-depth-0"><code>/etc/my.cnf</code> 中 <code>datadir</code> 是否配置错误</li>
+</ul>
+<h3 id="section-17">初始化后无法登录</h3>
+<p>重点检查：</p>
+<ul class="article-list">
+<li class="list-depth-0">是否使用了日志中生成的临时 <code>root</code> 密码</li>
+<li class="list-depth-0">是否已先执行 <code>ALTER USER</code> 修改密码</li>
+</ul>
+<h3 id="section-18">修改数据目录后启动异常</h3>
+<p>重点检查：</p>
+<ul class="article-list">
+<li class="list-depth-0">新目录中的文件是否复制完整</li>
+<li class="list-depth-0">配置文件是否仍指向旧目录</li>
+<li class="list-depth-0">目录权限与安全策略是否阻止访问</li>
+</ul>
+<h2 id="section-19">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">生产环境不要直接沿用示例密码，应替换为符合安全要求的实际密码</li>
+<li class="list-depth-0">关闭密码复杂度校验仅适合低风险环境</li>
+<li class="list-depth-0">创建远程全权限账号前，应先评估网络访问范围和审计要求</li>
+<li class="list-depth-0">涉及数据目录迁移和重新初始化时，必须先确认备份可用</li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

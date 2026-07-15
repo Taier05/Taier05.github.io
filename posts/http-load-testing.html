@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="对比 oha 与 JMeter 的使用场景，说明并发参数、指标含义和结果分析方法。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>HTTP 压测工具使用与结果分析手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">工具方法</p>
+        <h1>HTTP 压测工具使用与结果分析手册</h1>
+        <p class="article-lead">对比 oha 与 JMeter 的使用场景，说明并发参数、指标含义和结果分析方法。</p>
+        <div class="article-info"><span>技术手册</span><span>约 7 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>工具方法</span><strong>HTTP</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">工具选择建议</a>
+          <a class="toc-level-3" href="#section-3">选择 oha 的场景</a>
+          <a class="toc-level-3" href="#section-4">选择 JMeter 的场景</a>
+          <a class="toc-level-2" href="#section-5">oha 使用说明</a>
+          <a class="toc-level-3" href="#section-6">项目地址</a>
+          <a class="toc-level-3" href="#section-7">常用参数</a>
+          <a class="toc-level-3" href="#section-8">示例命令</a>
+          <a class="toc-level-3" href="#section-9">输出结果解读</a>
+          <a class="toc-level-2" href="#section-10">JMeter 部署与使用</a>
+          <a class="toc-level-3" href="#section-11">Linux 部署</a>
+          <a class="toc-level-3" href="#section-12">命令行执行测试计划</a>
+          <a class="toc-level-3" href="#section-13">报告导出与查看</a>
+          <a class="toc-level-3" href="#section-14">内存配置</a>
+          <a class="toc-level-2" href="#section-15">多方案对比与落地建议</a>
+          <a class="toc-level-3" href="#section-16">方案一：使用 oha 进行快速接口压测</a>
+          <a class="toc-level-3" href="#section-17">方案二：使用 JMeter 进行脚本化压测</a>
+          <a class="toc-level-3" href="#section-18">选择建议</a>
+          <a class="toc-level-2" href="#section-19">注意事项</a>
+          <a class="toc-level-2" href="#section-20">常见问题与排查方式</a>
+          <a class="toc-level-3" href="#section-21">oha 出现大量连接错误</a>
+          <a class="toc-level-3" href="#section-22">oha 出现超时或截止中止</a>
+          <a class="toc-level-3" href="#section-23">JMeter 无法生成报告或执行过程中内存不足</a>
+          <a class="toc-level-3" href="#section-24">JMeter 报告查看方式</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于沉淀两类常见 HTTP 压测方式：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>oha</code>：适合快速发起命令行压测，验证单接口吞吐、时延与错误分布。</li>
+<li class="list-depth-0"><code>JMeter</code>：适合执行 <code>.jmx</code> 测试计划，覆盖秒杀、搬家、全链路等复杂压测场景，并生成可视化报告。</li>
+</ul>
+<h2 id="section-2">工具选择建议</h2>
+<h3 id="section-3">选择 <code>oha</code> 的场景</h3>
+<ul class="article-list">
+<li class="list-depth-0">需要快速验证单个 URL 的基础性能表现。</li>
+<li class="list-depth-0">关注并发、总请求量、压测持续时间、QPS、响应时间分布等核心指标。</li>
+<li class="list-depth-0">不需要 GUI，也不依赖复杂测试计划文件。</li>
+</ul>
+<h3 id="section-4">选择 <code>JMeter</code> 的场景</h3>
+<ul class="article-list">
+<li class="list-depth-0">已有 <code>.jmx</code> 测试计划，或需要构建更完整的业务压测流程。</li>
+<li class="list-depth-0">需要导出 HTML 报告，便于复盘和对比。</li>
+<li class="list-depth-0">需要覆盖多接口、多步骤或全链路压测。</li>
+</ul>
+<h2 id="section-5">oha 使用说明</h2>
+<h3 id="section-6">项目地址</h3>
+<p>&lt;https://github.com/hatoo/oha&gt;</p>
+<h3 id="section-7">常用参数</h3>
+<pre><code class="language-bash"># 常用oha参数说明
+-n &lt;请求总数&gt;
+-z &lt;持续时间&gt;
+-c &lt;并发数&gt;</code></pre>
+<p>参数说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>-n</code>：指定总请求数，适合控制压测样本量。</li>
+<li class="list-depth-0"><code>-z</code>：指定持续时间，适合按固定时长观察系统表现。</li>
+<li class="list-depth-0"><code>-c</code>：指定并发数，直接影响压测强度。</li>
+</ul>
+<h3 id="section-8">示例命令</h3>
+<pre><code class="language-bash"># 测试1000次，持续10秒，并发100个
+oha -n 1000 -z 10s -c 100 http://www.example.com/</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">同时指定 <code>-n</code> 和 <code>-z</code> 时，可用于限制请求总量并控制压测窗口。</li>
+<li class="list-depth-0">URL 可替换为实际业务接口地址。</li>
+</ul>
+<h3 id="section-9">输出结果解读</h3>
+<p><code>oha</code> 的关键输出项可按以下方式理解：</p>
+<pre><code class="language-text">Success rate # 成功率
+Total # 总请求时间
+Slowest # 最慢请求时间
+Fastest # 最快请求时间
+Average # 平均请求时间
+Requests/sec # 每秒请求数(QPS)
+
+Total data # 总数据量
+Size/request # 单次请求数据量
+Size/sec # 每秒数据量
+
+Response time histogram: # 响应时间直方图
+
+Response time distribution # 响应时间分布
+
+Details (average, fastest, slowest) # 详细信息
+  DNS+dialup:   0.0466 secs, 0.0118 secs, 0.0680 secs # DNS解析+TCP连接时间
+  DNS-lookup:   0.0000 secs, 0.0000 secs, 0.0000 secs # DNS解析时间 0000表示没有DNS解析
+
+Status code distribution: # 状态码分布
+  [200] 601 responses # 200状态码的响应数量
+
+Error distribution: # 错误分布
+  [615] connection error # 615 次连接错误
+  [100] aborted due to deadline  # 100 次请求被中止
+  [100] timeout # 100 次请求超时</code></pre>
+<p>重点关注以下指标：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Success rate</code>：判断接口是否在目标压测强度下稳定成功。</li>
+<li class="list-depth-0"><code>Average</code>、<code>Slowest</code>、<code>Response time distribution</code>：判断整体时延与长尾情况。</li>
+<li class="list-depth-0"><code>Requests/sec</code>：衡量吞吐能力。</li>
+<li class="list-depth-0"><code>Status code distribution</code>：定位异常 HTTP 状态码。</li>
+<li class="list-depth-0"><code>Error distribution</code>：区分连接失败、超时、截止时间中止等问题类型。</li>
+<li class="list-depth-0"><code>DNS+dialup</code> 与 <code>DNS-lookup</code>：用于判断网络解析与连接建立是否成为瓶颈。</li>
+</ul>
+<h2 id="section-10">JMeter 部署与使用</h2>
+<h3 id="section-11">Linux 部署</h3>
+<pre><code class="language-bash">### linux 部署
+# 下载 tgz 包
+https://jmeter.apache.org/download_jmeter.cgi
+
+# 解压到指定目录
+tar xvf apache-jmeter-5.6.3.tgz -C /opt/
+
+# 配置环境变量
+vim /etc/profile
+JMETER_HOME=/opt/apache-jmeter-5.6.3
+PATH=${JMETER_HOME}/bin:$PATH
+
+source /etc/profile
+
+# 测试
+jmeter -v
+
+# 启动 jmeter
+jmeter</code></pre>
+<p>建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">将 <code>JMETER_HOME</code> 与实际安装版本保持一致。</li>
+<li class="list-depth-0">修改 <code>/etc/profile</code> 后执行 <code>source /etc/profile</code>，确保当前会话立即生效。</li>
+<li class="list-depth-0">先用 <code>jmeter -v</code> 验证安装是否成功，再决定是否启动 GUI。</li>
+</ul>
+<h3 id="section-12">命令行执行测试计划</h3>
+<p>适用于服务器环境、CI 环境或无需图形界面的批量压测。</p>
+<pre><code class="language-bash"># 命令方式启动
+jmeter -n -t 团购秒杀压测.jmx -l 2.jtl -e -o report_folder
+# 参数说明
+-n 表示不启动 GUI 界面
+-t 指定测试计划文件
+-l 指定结果文件
+-e 表示在命令行输出错误信息
+-o 指定结果文件保存路径</code></pre>
+<p>另一组示例：</p>
+<pre><code class="language-bash">jmeter -n -t 服务器搬家全链路压测.jmx -l 2.jtl -e -o report_folder</code></pre>
+<p>适用建议：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>团购秒杀压测.jmx</code>：适合高并发、突发流量场景。</li>
+<li class="list-depth-0"><code>服务器搬家全链路压测.jmx</code>：适合系统迁移、链路切换、端到端回归验证。</li>
+</ul>
+<p>如果不同 <code>.jmx</code> 文件对应不同业务场景，应分别维护测试数据、断言、线程组和报告目录，避免结果互相覆盖。</p>
+<h3 id="section-13">报告导出与查看</h3>
+<pre><code class="language-bash"># 生产的报告report_folder 导出到电脑打开index.html即可查看</code></pre>
+<p>建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">每次执行压测时使用独立的 <code>report_folder</code>，便于结果留档与横向对比。</li>
+<li class="list-depth-0">报告目录生成后，重点查看吞吐量、响应时间百分位、错误率和失败请求详情。</li>
+</ul>
+<h3 id="section-14">内存配置</h3>
+<p>在生成报告或执行大规模压测时，JMeter 默认内存可能不足，可按以下方式调整：</p>
+<pre><code class="language-bash"># jmeter 设置内存，不然无法生成报告
+vim /opt/apache-jmeter-5.6.3/bin/jmeter
+: &quot;${HEAP:=&quot;-Xms20g -Xmx20g -XX:MaxMetaspaceSize=512m&quot;}&quot;</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>-Xms20g</code> 与 <code>-Xmx20g</code> 提供较大的堆内存，适合大结果集或较重的报告生成任务。</li>
+<li class="list-depth-0">若机器内存不足，不应直接照搬 <code>20g</code>，应按宿主机资源合理下调。</li>
+<li class="list-depth-0">如果仅做中小规模压测，可使用更保守的堆配置，避免与被测系统争抢资源。</li>
+</ul>
+<h2 id="section-15">多方案对比与落地建议</h2>
+<h3 id="section-16">方案一：使用 <code>oha</code> 进行快速接口压测</h3>
+<p>适合以下目标：</p>
+<ul class="article-list">
+<li class="list-depth-0">验证接口在固定并发下的极限吞吐。</li>
+<li class="list-depth-0">快速观察 QPS、平均时延、错误类型。</li>
+<li class="list-depth-0">临时排查网络连接、超时和状态码异常。</li>
+</ul>
+<p>优点：</p>
+<ul class="article-list">
+<li class="list-depth-0">命令简单，上手快。</li>
+<li class="list-depth-0">输出直接，适合终端中快速判断结果。</li>
+</ul>
+<p>限制：</p>
+<ul class="article-list">
+<li class="list-depth-0">不适合复杂业务编排。</li>
+<li class="list-depth-0">不直接依赖测试计划文件，复用复杂场景能力较弱。</li>
+</ul>
+<h3 id="section-17">方案二：使用 <code>JMeter</code> 进行脚本化压测</h3>
+<p>适合以下目标：</p>
+<ul class="article-list">
+<li class="list-depth-0">执行固定的业务压测脚本。</li>
+<li class="list-depth-0">生成结构化测试报告。</li>
+<li class="list-depth-0">覆盖秒杀、迁移、全链路验证等业务场景。</li>
+</ul>
+<p>优点：</p>
+<ul class="article-list">
+<li class="list-depth-0">可维护 <code>.jmx</code> 测试计划。</li>
+<li class="list-depth-0">适合长期回归和多人协作。</li>
+</ul>
+<p>限制：</p>
+<ul class="article-list">
+<li class="list-depth-0">部署和资源消耗高于 <code>oha</code>。</li>
+<li class="list-depth-0">生成报告时对内存更敏感。</li>
+</ul>
+<h3 id="section-18">选择建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">单接口、快速验证：优先使用 <code>oha</code>。</li>
+<li class="list-depth-0">复杂业务流、标准化报告、长期复用：优先使用 <code>JMeter</code>。</li>
+<li class="list-depth-0">若先做容量摸底，再做业务回归，可先用 <code>oha</code> 快速找到压测区间，再用 <code>JMeter</code> 执行完整场景验证。</li>
+</ul>
+<h2 id="section-19">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">压测前应确认目标环境是否允许压测，避免影响生产业务。</li>
+<li class="list-depth-0"><code>oha</code> 中出现大量 <code>connection error</code>、<code>timeout</code> 或 <code>aborted due to deadline</code> 时，应同时检查网络、网关、负载均衡、应用线程池与超时配置。</li>
+<li class="list-depth-0">JMeter 报告目录参数 <code>-o</code> 如果指向已存在目录，通常需要先清理或更换路径，以免报告生成失败。</li>
+<li class="list-depth-0">大规模 JMeter 压测不要只关注被测服务，也要关注压测机本身的 CPU、内存、磁盘与网络。</li>
+<li class="list-depth-0">如果压测结果需要长期对比，应固定并发、时长、测试数据、压测机规格和网络路径。</li>
+</ul>
+<h2 id="section-20">常见问题与排查方式</h2>
+<h3 id="section-21"><code>oha</code> 出现大量连接错误</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">目标地址是否可达。</li>
+<li class="list-depth-0">域名解析是否正常。</li>
+<li class="list-depth-0">服务端连接数、监听队列或网关限流是否成为瓶颈。</li>
+<li class="list-depth-0">并发值是否超过当前环境承载能力。</li>
+</ul>
+<h3 id="section-22"><code>oha</code> 出现超时或截止中止</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">服务端响应时间是否持续升高。</li>
+<li class="list-depth-0">下游依赖是否存在阻塞。</li>
+<li class="list-depth-0">被测接口是否存在数据库慢查询、锁竞争或线程池耗尽。</li>
+</ul>
+<h3 id="section-23">JMeter 无法生成报告或执行过程中内存不足</h3>
+<p>处理建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">调整 <code>HEAP</code> 参数。</li>
+<li class="list-depth-0">减少单次保留的结果数据量。</li>
+<li class="list-depth-0">按场景拆分压测计划，避免一次性加载过多线程组与结果集。</li>
+</ul>
+<h3 id="section-24">JMeter 报告查看方式</h3>
+<p>处理方式：</p>
+<ul class="article-list">
+<li class="list-depth-0">生成 <code>report_folder</code> 后，将目录导出到本地。</li>
+<li class="list-depth-0">直接打开 <code>index.html</code> 查看报告内容。</li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="记录容器化部署、局域网代理参数，以及终端、Docker 与 systemd 服务的代理配置。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>v2rayA 容器部署与局域网代理使用手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>v2rayA 容器部署与局域网代理使用手册</h1>
+        <p class="article-lead">记录容器化部署、局域网代理参数，以及终端、Docker 与 systemd 服务的代理配置。</p>
+        <div class="article-info"><span>技术手册</span><span>约 6 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>NET</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">部署步骤</a>
+          <a class="toc-level-3" href="#section-4">1. 创建数据目录</a>
+          <a class="toc-level-3" href="#section-5">2. 启动容器</a>
+          <a class="toc-level-3" href="#section-6">3. 访问 Web 管理页面</a>
+          <a class="toc-level-2" href="#section-7">Web 端基础配置</a>
+          <a class="toc-level-2" href="#section-8">局域网客户端代理使用</a>
+          <a class="toc-level-3" href="#section-9">方案一：HTTP/HTTPS 代理</a>
+          <a class="toc-level-3" href="#section-10">方案二：SOCKS5 代理</a>
+          <a class="toc-level-3" href="#section-11">方案选择建议</a>
+          <a class="toc-level-2" href="#section-12">命令行临时代理设置</a>
+          <a class="toc-level-2" href="#section-13">取消代理</a>
+          <a class="toc-level-2" href="#section-14">Docker 拉取镜像代理配置</a>
+          <a class="toc-level-3" href="#section-15">1. 创建配置目录</a>
+          <a class="toc-level-3" href="#section-16">2. 写入代理配置</a>
+          <a class="toc-level-3" href="#section-17">3. 重载并重启 Docker</a>
+          <a class="toc-level-2" href="#section-18">连通性验证</a>
+          <a class="toc-level-3" href="#section-19">查看出口公网 IP</a>
+          <a class="toc-level-3" href="#section-20">查看当前 IP 信息</a>
+          <a class="toc-level-2" href="#section-21">注意事项</a>
+          <a class="toc-level-2" href="#section-22">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-23">Web 页面可以打开，但客户端无法走代理</a>
+          <a class="toc-level-3" href="#section-24">命令行工具仍然直连外网</a>
+          <a class="toc-level-3" href="#section-25">Docker 仍然无法拉取镜像</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于在 Linux 主机上通过 Docker 部署 <code>v2rayA</code>，并将该主机作为局域网内其他机器的代理出口使用。内容覆盖容器启动、Web 端基础配置、客户端代理变量设置、Docker 拉镜像代理以及常见验证方法。</p>
+<h2 id="section-2">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">宿主机已安装 Docker。</li>
+<li class="list-depth-0">宿主机允许使用 <code>host</code> 网络模式。</li>
+<li class="list-depth-0"><code>v2rayA</code> Web 管理端口为 <code>2017</code>。</li>
+<li class="list-depth-0">局域网客户端通过 HTTP/HTTPS 或 SOCKS5 代理访问外网。</li>
+<li class="list-depth-0">镜像版本使用：<code>swr.cn-south-1.myhuaweicloud.com/yalex/v2raya:&lt;IP_ADDRESS&gt;</code></li>
+</ul>
+<h2 id="section-3">部署步骤</h2>
+<h3 id="section-4">1. 创建数据目录</h3>
+<p>推荐使用绝对路径保存配置，避免当前工作目录变化导致挂载路径不一致：</p>
+<pre><code class="language-bash">mkdir -p /docker/v2raya</code></pre>
+<h3 id="section-5">2. 启动容器</h3>
+<p>推荐命令如下，配置目录与前面的数据目录保持一致：</p>
+<pre><code class="language-bash">docker run -d \
+  --name v2raya \
+  --network=host \
+  -e V2RAYA_ADDRESS=&lt;IP_ADDRESS&gt;:2017 \
+  -v /lib/modules:/lib/modules:ro \
+  -v /etc/resolv.conf:/etc/resolv.conf \
+  -v /docker/v2raya:/etc/v2raya \
+  --restart=always \
+  --privileged \
+  swr.cn-south-1.myhuaweicloud.com/yalex/v2raya:&lt;IP_ADDRESS&gt;</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>--network=host</code> 直接使用宿主机网络，便于开放 Web 管理端口和代理端口。</li>
+<li class="list-depth-0"><code>--privileged</code> 与 <code>/lib/modules</code> 挂载通常用于透明代理、路由及相关内核能力场景。</li>
+<li class="list-depth-0">若确实希望把配置保存在当前目录，也可以把挂载改为 <code>-v ./v2raya:/etc/v2raya</code>，但需要确保容器启动目录固定。</li>
+</ul>
+<h3 id="section-6">3. 访问 Web 管理页面</h3>
+<p>浏览器访问：</p>
+<pre><code class="language-text">http://&lt;IP_ADDRESS&gt;:2017/</code></pre>
+<p>实际使用时，应将 <code>&lt;IP_ADDRESS&gt;</code> 替换为宿主机真实可访问地址。</p>
+<h2 id="section-7">Web 端基础配置</h2>
+<p>容器启动后，在 Web 页面完成以下操作：</p>
+<ol class="article-list">
+<li class="list-depth-0">导入节点。</li>
+<li class="list-depth-0">启用大陆白名单模式。</li>
+<li class="list-depth-0">选择目标节点并点击连接。</li>
+<li class="list-depth-0">在左上角执行启动。</li>
+</ol>
+<h2 id="section-8">局域网客户端代理使用</h2>
+<p>当其他内网机器需要通过该宿主机访问外网时，可以直接设置代理环境变量。</p>
+<h3 id="section-9">方案一：HTTP/HTTPS 代理</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>curl</code>、<code>wget</code>、包管理器、容器构建等常见 CLI 工具。</li>
+<li class="list-depth-0">大多数仅识别 <code>http_proxy</code> 和 <code>https_proxy</code> 的程序。</li>
+</ul>
+<p>通用写法：</p>
+<pre><code class="language-bash">export http_proxy=http://内网IP:20172
+export https_proxy=http://内网IP:20172</code></pre>
+<p>示例：</p>
+<pre><code class="language-bash">export http_proxy=http://&lt;IP_ADDRESS&gt;:20172
+export https_proxy=http://&lt;IP_ADDRESS&gt;:20172</code></pre>
+<pre><code class="language-bash">export http_proxy=http://&lt;IP_ADDRESS&gt;:20172
+export https_proxy=http://&lt;IP_ADDRESS&gt;:20172</code></pre>
+<pre><code class="language-bash">export http_proxy=http://&lt;IP_ADDRESS&gt;:7897
+export https_proxy=http://&lt;IP_ADDRESS&gt;:7897</code></pre>
+<h3 id="section-10">方案二：SOCKS5 代理</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要统一转发更多协议流量。</li>
+<li class="list-depth-0">客户端程序支持 <code>all_proxy</code> 或 SOCKS5。</li>
+</ul>
+<p>推荐写法：</p>
+<pre><code class="language-bash">export all_proxy=socks5h://&lt;IP_ADDRESS&gt;:7897</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>socks5h</code> 会将域名解析交给代理端处理，通常更适合代理访问外部域名。</li>
+<li class="list-depth-0">如果程序只认 HTTP 代理，则优先使用上一节的 HTTP/HTTPS 方式。</li>
+</ul>
+<h3 id="section-11">方案选择建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">优先选 <code>HTTP/HTTPS</code>：兼容性最好，适合大多数命令行工具。</li>
+<li class="list-depth-0">选 <code>SOCKS5</code>：适用于明确支持 SOCKS 的程序，尤其是需要远端 DNS 解析的场景。</li>
+<li class="list-depth-0">如果代理端实际开放端口不是 <code>20172</code> 或 <code>7897</code>，应以宿主机当前真实监听端口为准。</li>
+</ul>
+<h2 id="section-12">命令行临时代理设置</h2>
+<p>如需在当前终端中一次性设置多种代理变量，可使用：</p>
+<pre><code class="language-bash">export https_proxy=http://&lt;IP_ADDRESS&gt;:7897
+export http_proxy=http://&lt;IP_ADDRESS&gt;:7897
+export all_proxy=socks5://&lt;IP_ADDRESS&gt;:7897</code></pre>
+<p>如果希望单条命令临时生效，也可以写成：</p>
+<pre><code class="language-bash">https_proxy=http://&lt;IP_ADDRESS&gt;:7897 \
+http_proxy=http://&lt;IP_ADDRESS&gt;:7897 \
+all_proxy=socks5://&lt;IP_ADDRESS&gt;:7897 \
+curl https://ipinfo.io/</code></pre>
+<h2 id="section-13">取消代理</h2>
+<p>取消当前终端代理环境：</p>
+<pre><code class="language-bash">export http_proxy=
+export https_proxy=
+export all_proxy=</code></pre>
+<h2 id="section-14">Docker 拉取镜像代理配置</h2>
+<p>当宿主机拉取镜像需要走代理时，可为 Docker 服务单独配置代理。</p>
+<h3 id="section-15">1. 创建配置目录</h3>
+<pre><code class="language-bash">mkdir -p /etc/systemd/system/docker.service.d</code></pre>
+<h3 id="section-16">2. 写入代理配置</h3>
+<p>文件路径：</p>
+<pre><code class="language-text">/etc/systemd/system/docker.service.d/proxy.conf</code></pre>
+<p>配置示例：</p>
+<pre><code class="language-ini">[Service]
+Environment=&quot;HTTP_PROXY=http://&lt;IP_ADDRESS&gt;:20172/&quot;
+Environment=&quot;HTTPS_PROXY=http://&lt;IP_ADDRESS&gt;:20172/&quot;
+Environment=&quot;NO_PROXY=localhost,&lt;IP_ADDRESS&gt;,.example.com&quot;</code></pre>
+<h3 id="section-17">3. 重载并重启 Docker</h3>
+<pre><code class="language-bash">systemctl daemon-reload
+systemctl restart docker</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">该配置仅在 Docker 守护进程访问外网需要代理时使用。</li>
+<li class="list-depth-0">如果当前网络环境下 Docker 可直接拉取镜像，则无需额外配置。</li>
+</ul>
+<h2 id="section-18">连通性验证</h2>
+<h3 id="section-19">查看出口公网 IP</h3>
+<pre><code class="language-bash">curl https://ipinfo.io/</code></pre>
+<h3 id="section-20">查看当前 IP 信息</h3>
+<pre><code class="language-bash">curl cip.cc</code></pre>
+<p>验证思路：</p>
+<ul class="article-list">
+<li class="list-depth-0">未启用代理时，返回结果通常显示本地网络出口。</li>
+<li class="list-depth-0">启用代理后，若出口地址发生变化，则说明代理已经生效。</li>
+</ul>
+<h2 id="section-21">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">文中的 IP 地址均为示例，部署时必须替换为实际宿主机地址。</li>
+<li class="list-depth-0"><code>2017</code> 用于 <code>v2rayA</code> Web 管理界面，不等同于客户端实际代理端口。</li>
+<li class="list-depth-0"><code>20172</code>、<code>7897</code> 属于文档中的已使用代理端口示例，实际端口需以当前服务监听状态为准。</li>
+<li class="list-depth-0">局域网客户端若无法访问外网，应同时检查宿主机防火墙、路由转发和代理服务监听地址。</li>
+</ul>
+<h2 id="section-22">常见问题与排查</h2>
+<h3 id="section-23">Web 页面可以打开，但客户端无法走代理</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认 Web 端已导入节点、已连接节点并已启动。</li>
+<li class="list-depth-0">确认客户端设置的代理端口与服务真实监听端口一致。</li>
+<li class="list-depth-0">确认客户端访问的是宿主机内网 IP，而不是不可达地址。</li>
+</ul>
+<h3 id="section-24">命令行工具仍然直连外网</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">检查当前终端是否已正确执行 <code>export</code>。</li>
+<li class="list-depth-0">确认目标程序是否继承了当前 shell 环境变量。</li>
+<li class="list-depth-0">对不支持 <code>all_proxy</code> 的程序，改用 <code>http_proxy</code> 和 <code>https_proxy</code>。</li>
+</ul>
+<h3 id="section-25">Docker 仍然无法拉取镜像</h3>
+<p>排查方向：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认 <code>/etc/systemd/system/docker.service.d/proxy.conf</code> 内容无误。</li>
+<li class="list-depth-0">执行 <code>systemctl daemon-reload</code> 与 <code>systemctl restart docker</code> 后重新尝试。</li>
+<li class="list-depth-0">检查代理地址是否可从宿主机直接访问。</li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

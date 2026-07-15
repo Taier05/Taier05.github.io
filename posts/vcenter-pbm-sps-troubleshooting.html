@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="从 SPS 服务、核心依赖和磁盘空间入手，复盘虚拟机创建失败的定位与恢复过程。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>vCenter PBM / SPS 服务异常排查记录 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>vCenter PBM / SPS 服务异常排查记录</h1>
+        <p class="article-lead">从 SPS 服务、核心依赖和磁盘空间入手，复盘虚拟机创建失败的定位与恢复过程。</p>
+        <div class="article-info"><span>技术手册</span><span>约 5 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>VC</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">一、故障现象</a>
+          <a class="toc-level-2" href="#section-2">二、故障判断</a>
+          <a class="toc-level-2" href="#section-3">三、排查过程</a>
+          <a class="toc-level-3" href="#section-4">1. 检查 SPS 服务状态</a>
+          <a class="toc-level-3" href="#section-5">2. 检查 vCenter 核心依赖服务</a>
+          <a class="toc-level-3" href="#section-6">3. 检查磁盘空间</a>
+          <a class="toc-level-2" href="#section-7">四、处理方法</a>
+          <a class="toc-level-2" href="#section-8">五、处理结果</a>
+          <a class="toc-level-2" href="#section-9">六、最终根因</a>
+          <a class="toc-level-2" href="#section-10">七、常用检查命令</a>
+          <a class="toc-level-3" href="#section-11">检查 SPS 服务</a>
+          <a class="toc-level-3" href="#section-12">启动 SPS 服务</a>
+          <a class="toc-level-3" href="#section-13">重启 SPS 服务</a>
+          <a class="toc-level-3" href="#section-14">检查相关服务</a>
+          <a class="toc-level-3" href="#section-15">检查所有 vCenter 服务</a>
+          <a class="toc-level-3" href="#section-16">检查磁盘空间</a>
+          <a class="toc-level-3" href="#section-17">查看 SPS 日志</a>
+          <a class="toc-level-3" href="#section-18">查看 vMon 日志</a>
+          <a class="toc-level-2" href="#section-19">八、后续建议</a>
+          <a class="toc-level-2" href="#section-20">九、故障结论摘要</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">一、故障现象</h2>
+<p>在 vSphere Client 中，通过 vCenter 给任意一台 ESXi 主机创建虚拟机时，均出现相同报错：</p>
+<pre><code class="language-text">无法连接到 Profile-Driven Storage Service。</code></pre>
+<p>创建虚拟机时进一步报错：</p>
+<pre><code class="language-text">出现了常规系统错误:
+PBM error occurred during PreCreateCheckCallback:
+No version for VMODL calls to
+&lt;&lt;last binding: &lt;&lt;TCP &#39;&lt;IP_ADDRESS&gt; : 51346&#39;&gt;,
+&lt;TCP &#39;&lt;IP_ADDRESS&gt; : 1080&#39;&gt;&gt; &gt;, /pbm/sdk&gt;</code></pre>
+<p>故障特点：</p>
+<ul class="article-list">
+<li class="list-depth-0">vCenter 下所有 ESXi 主机均无法正常创建虚拟机</li>
+<li class="list-depth-0">不同 datastore 均出现相同错误</li>
+<li class="list-depth-0">报错中包含 <code>/pbm/sdk</code></li>
+<li class="list-depth-0">报错中包含 <code>&lt;IP_ADDRESS&gt;:1080</code></li>
+<li class="list-depth-0">vSphere Client 提示无法连接到 Profile-Driven Storage Service</li>
+</ul>
+<hr />
+<h2 id="section-2">二、故障判断</h2>
+<p>由于所有 ESXi 主机都出现相同的 PBM 错误，因此问题并非单台 ESXi、单个 datastore 或虚拟机参数导致，而是集中在 vCenter 本身。</p>
+<p>PBM 和 SPS 的关系如下：</p>
+<ul class="article-list">
+<li class="list-depth-0"><strong>PBM</strong>：Policy-Based Management，基于策略的存储管理</li>
+<li class="list-depth-0"><strong>SPS</strong>：Storage Policy Service / Profile-Driven Storage Service</li>
+<li class="list-depth-0">vCenter 中对应服务名：<code>vmware-sps</code></li>
+</ul>
+<p>创建虚拟机时，vCenter 会调用 PBM/SPS 服务执行存储策略和兼容性预检查。</p>
+<p>当 <code>vmware-sps</code> 服务停止后，vCenter 无法正常访问 <code>/pbm/sdk</code>，因此所有通过 vCenter 发起的虚拟机创建任务都会失败。</p>
+<hr />
+<h2 id="section-3">三、排查过程</h2>
+<h3 id="section-4">1. 检查 SPS 服务状态</h3>
+<p>登录 vCenter Server Appliance，执行：</p>
+<pre><code class="language-bash">service-control --status vmware-sps</code></pre>
+<p>返回结果：</p>
+<pre><code class="language-text">Stopped:
+ vmware-sps</code></pre>
+<p>说明 <code>vmware-sps</code> 服务已停止。</p>
+<hr />
+<h3 id="section-5">2. 检查 vCenter 核心依赖服务</h3>
+<p>执行：</p>
+<pre><code class="language-bash">service-control --status vmware-vpxd
+service-control --status vmware-vpxd-svcs
+service-control --status vmware-stsd</code></pre>
+<p>返回结果：</p>
+<pre><code class="language-text">Running:
+ vmware-vpxd</code></pre>
+<pre><code class="language-text">Running:
+ vmware-vpxd-svcs</code></pre>
+<pre><code class="language-text">Running:
+ vmware-stsd</code></pre>
+<p>说明 vCenter 核心管理服务、vpxd 相关服务以及 STS 服务均正常运行。</p>
+<hr />
+<h3 id="section-6">3. 检查磁盘空间</h3>
+<p>执行：</p>
+<pre><code class="language-bash">df -h</code></pre>
+<p>检查结果显示：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>/storage/log</code> 使用率约 10%</li>
+<li class="list-depth-0"><code>/storage/db</code> 使用率约 2%</li>
+<li class="list-depth-0"><code>/storage/core</code> 使用率约 1%</li>
+<li class="list-depth-0">根分区 <code>/</code> 使用率约 33%</li>
+</ul>
+<p>未发现分区空间不足问题。</p>
+<p>因此，本次故障不是由 vCenter 磁盘空间耗尽导致。</p>
+<hr />
+<h2 id="section-7">四、处理方法</h2>
+<p>执行以下命令启动 <code>vmware-sps</code> 服务：</p>
+<pre><code class="language-bash">service-control --start vmware-sps</code></pre>
+<p>启动完成后，可再次检查服务状态：</p>
+<pre><code class="language-bash">service-control --status vmware-sps</code></pre>
+<p>正常情况下应返回：</p>
+<pre><code class="language-text">Running:
+ vmware-sps</code></pre>
+<hr />
+<h2 id="section-8">五、处理结果</h2>
+<p>启动 <code>vmware-sps</code> 服务后：</p>
+<ul class="article-list">
+<li class="list-depth-0">vSphere Client 不再提示“无法连接到 Profile-Driven Storage Service”</li>
+<li class="list-depth-0">PBM <code>/pbm/sdk</code> 错误消失</li>
+<li class="list-depth-0">vCenter 下各 ESXi 主机均可正常创建虚拟机</li>
+<li class="list-depth-0">无需重启 ESXi 主机</li>
+<li class="list-depth-0">无需重启整个 vCenter</li>
+<li class="list-depth-0">无需修改 datastore 或虚拟机配置</li>
+</ul>
+<hr />
+<h2 id="section-9">六、最终根因</h2>
+<p>本次故障的直接原因是：</p>
+<pre><code class="language-text">vCenter 的 vmware-sps 服务处于 Stopped 状态</code></pre>
+<p>由于 <code>vmware-sps</code> 停止，vCenter 无法完成虚拟机创建前的 PBM 存储策略预检查，从而导致所有 ESXi 主机通过 vCenter 创建虚拟机时统一报错。</p>
+<hr />
+<h2 id="section-10">七、常用检查命令</h2>
+<h3 id="section-11">检查 SPS 服务</h3>
+<pre><code class="language-bash">service-control --status vmware-sps</code></pre>
+<h3 id="section-12">启动 SPS 服务</h3>
+<pre><code class="language-bash">service-control --start vmware-sps</code></pre>
+<h3 id="section-13">重启 SPS 服务</h3>
+<p>仅在服务显示 Running，但 PBM 功能仍异常时使用：</p>
+<pre><code class="language-bash">service-control --restart vmware-sps</code></pre>
+<h3 id="section-14">检查相关服务</h3>
+<pre><code class="language-bash">service-control --status vmware-vpxd
+service-control --status vmware-vpxd-svcs
+service-control --status vmware-stsd</code></pre>
+<h3 id="section-15">检查所有 vCenter 服务</h3>
+<pre><code class="language-bash">service-control --status --all</code></pre>
+<h3 id="section-16">检查磁盘空间</h3>
+<pre><code class="language-bash">df -h</code></pre>
+<h3 id="section-17">查看 SPS 日志</h3>
+<pre><code class="language-bash">tail -n 200 /var/log/vmware/vmware-sps/sps.log</code></pre>
+<h3 id="section-18">查看 vMon 日志</h3>
+<pre><code class="language-bash">tail -n 200 /var/log/vmware/vmon/vmon.log</code></pre>
+<hr />
+<h2 id="section-19">八、后续建议</h2>
+<p>如果 <code>vmware-sps</code> 后续再次自动停止，不建议只反复手动启动，应进一步检查：</p>
+<ol class="article-list">
+<li class="list-depth-0">SPS 服务日志中是否存在证书、SSO、权限或数据库错误</li>
+<li class="list-depth-0">vCenter 是否发生过异常断电或非正常重启</li>
+<li class="list-depth-0">vCenter 证书是否临近过期或已经过期</li>
+<li class="list-depth-0"><code>/storage/log</code>、<code>/storage/db</code> 等分区是否空间不足</li>
+<li class="list-depth-0">vCenter 是否刚完成升级、补丁安装或恢复操作</li>
+<li class="list-depth-0"><code>vmware-sps</code> 是否频繁崩溃或启动后自动退出</li>
+</ol>
+<p>建议重点查看：</p>
+<pre><code class="language-bash">grep -iE &quot;error|exception|certificate|permission|sso|database|failed&quot; \
+/var/log/vmware/vmware-sps/sps.log | tail -n 100</code></pre>
+<hr />
+<h2 id="section-20">九、故障结论摘要</h2>
+<pre><code class="language-text">故障现象：
+vCenter 下所有 ESXi 创建虚拟机时报 PBM 错误。
+
+直接原因：
+vCenter 的 vmware-sps 服务停止。
+
+处理命令：
+service-control --start vmware-sps
+
+处理结果：
+服务启动后，虚拟机恢复正常创建。</code></pre>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

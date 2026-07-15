@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="使用 ossutil 完成大文件上传、下载、校验和定期备份，并说明内外网 Endpoint 选择。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>阿里云 OSS 文件传输与备份操作手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css" />
+    <script src="/assets/js/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>阿里云 OSS 文件传输与备份操作手册</h1>
+        <p class="article-lead">使用 ossutil 完成大文件上传、下载、校验和定期备份，并说明内外网 Endpoint 选择。</p>
+        <div class="article-info"><span>技术手册</span><span>约 7 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>OSS</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">安装 ossutil</a>
+          <a class="toc-level-3" href="#section-4">推荐方式：官方安装脚本</a>
+          <a class="toc-level-3" href="#section-5">备用方式：手工下载并安装</a>
+          <a class="toc-level-2" href="#section-6">凭证与连接配置</a>
+          <a class="toc-level-3" href="#section-7">内网 Endpoint</a>
+          <a class="toc-level-3" href="#section-8">公网 Endpoint</a>
+          <a class="toc-level-2" href="#section-9">单文件上传与下载</a>
+          <a class="toc-level-3" href="#section-10">上传单文件</a>
+          <a class="toc-level-3" href="#section-11">下载单文件</a>
+          <a class="toc-level-2" href="#section-12">目录传输方案</a>
+          <a class="toc-level-3" href="#section-13">方案一：cp -r 递归上传</a>
+          <a class="toc-level-3" href="#section-14">方案二：sync 目录同步</a>
+          <a class="toc-level-2" href="#section-15">传输后校验</a>
+          <a class="toc-level-3" href="#section-16">列出对象</a>
+          <a class="toc-level-3" href="#section-17">查看对象属性</a>
+          <a class="toc-level-3" href="#section-18">计算本地哈希</a>
+          <a class="toc-level-2" href="#section-19">备份场景推荐流程</a>
+          <a class="toc-level-2" href="#section-20">常用命令速查</a>
+          <a class="toc-level-2" href="#section-21">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-22">Bucket Endpoint 不匹配</a>
+          <a class="toc-level-3" href="#section-23">上传慢或传输失败</a>
+          <a class="toc-level-3" href="#section-24">AccessDenied</a>
+          <a class="toc-level-2" href="#section-25">注意事项</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于规范服务器侧通过 <code>ossutil</code> 向阿里云 OSS 执行文件上传、下载、目录同步与结果校验的操作流程，适用于备份归档、文件分发和对象存储日常维护场景。</p>
+<h2 id="section-2">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">操作系统：Linux 服务器</li>
+<li class="list-depth-0">工具：<code>ossutil 2.x</code></li>
+<li class="list-depth-0">典型数据路径：<code>/BF/xtrabackup/</code></li>
+<li class="list-depth-0">典型 Bucket：<code>oss://example-backup/</code></li>
+</ul>
+<p>使用前需确认以下信息：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>AccessKey ID</code></li>
+<li class="list-depth-0"><code>AccessKey Secret</code></li>
+<li class="list-depth-0">Bucket 所在地域，例如 <code>cn-hangzhou</code></li>
+<li class="list-depth-0">对应 Endpoint</li>
+</ul>
+<p>实践建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">优先使用具备最小权限的 RAM 子账号，不建议长期使用主账号密钥。</li>
+<li class="list-depth-0"><code>ossutil 2.x</code> 默认使用 V4 签名，<code>region</code> 应正确配置，否则可能报错 <code>region must be set in sign version 4</code>。</li>
+<li class="list-depth-0">ECS 与 OSS 同地域时优先使用内网 Endpoint，以降低流量成本并提升传输速度。</li>
+</ul>
+<h2 id="section-3">安装 <code>ossutil</code></h2>
+<h3 id="section-4">推荐方式：官方安装脚本</h3>
+<p>适用场景：服务器可直接访问阿里云公共下载地址，且希望快速完成安装。</p>
+<pre><code class="language-shell">sudo yum install -y unzip
+sudo -v
+curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+ossutil version</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">安装完成后通常可直接使用 <code>ossutil</code> 命令。</li>
+<li class="list-depth-0">若系统 PATH 未立即生效，可重新登录 shell 后再验证版本。</li>
+</ul>
+<h3 id="section-5">备用方式：手工下载并安装</h3>
+<p>适用场景：无法直接使用安装脚本，或需要手工控制安装过程。</p>
+<pre><code class="language-shell">sudo yum install -y unzip
+curl -o ossutil-2.2.0-linux-amd64.zip https://gosspublic.alicdn.com/ossutil/v2/2.2.0/ossutil-2.2.0-linux-amd64.zip
+unzip ossutil-2.2.0-linux-amd64.zip
+cd ossutil-2.2.0-linux-amd64
+chmod 755 ossutil
+sudo mv ossutil /usr/local/bin/
+sudo ln -s /usr/local/bin/ossutil /usr/bin/ossutil
+ossutil version</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">若 <code>/usr/bin/ossutil</code> 已存在，可省略软链接步骤。</li>
+<li class="list-depth-0">离线环境可先在可联网机器下载压缩包，再传至目标服务器安装。</li>
+</ul>
+<h2 id="section-6">凭证与连接配置</h2>
+<p>首次使用执行：</p>
+<pre><code class="language-shell">ossutil config</code></pre>
+<p>关键配置项说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>AccessKey ID</code>：访问 OSS 的账号标识</li>
+<li class="list-depth-0"><code>AccessKey Secret</code>：对应密钥</li>
+<li class="list-depth-0"><code>Region</code>：Bucket 地域，例如 <code>cn-hangzhou</code></li>
+<li class="list-depth-0"><code>Endpoint</code>：访问入口地址，可按网络环境选择</li>
+</ul>
+<p>Endpoint 选择建议：</p>
+<h3 id="section-7">内网 Endpoint</h3>
+<p>适用场景：ECS 与 OSS 位于同地域，且通过阿里云内网访问。</p>
+<pre><code class="language-text">https://oss-cn-hangzhou-internal.aliyuncs.com</code></pre>
+<p>优势：</p>
+<ul class="article-list">
+<li class="list-depth-0">速度更稳定</li>
+<li class="list-depth-0">流量成本更低</li>
+</ul>
+<h3 id="section-8">公网 Endpoint</h3>
+<p>适用场景：非阿里云内网环境，或跨公网访问 OSS。</p>
+<pre><code class="language-text">https://oss-cn-hangzhou.aliyuncs.com</code></pre>
+<p>注意：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>endpoint</code> 必须与 Bucket 实际地域一致。</li>
+<li class="list-depth-0">Bucket 地域不匹配时，常见报错为 <code>The bucket you are attempting to access must be addressed using the specified endpoint</code>。</li>
+</ul>
+<h2 id="section-9">单文件上传与下载</h2>
+<h3 id="section-10">上传单文件</h3>
+<p>适用场景：备份包、压缩文件、单个制品归档。</p>
+<pre><code class="language-shell">ossutil cp /BF/xtrabackup/2025-12-11/2025-12-11-full.tar.zst \
+  oss://example-backup/site-a/2025-12-11/2025-12-11-full.tar.zst</code></pre>
+<p>后台上传：</p>
+<pre><code class="language-shell">nohup ossutil cp \
+  /BF/xtrabackup/2025-12-11/2025-12-11-full.tar.zst \
+  oss://example-backup/site-a/2025-12-11/2025-12-11-full.tar.zst \
+  &gt; /opt/xtrabackup-upload.log 2&gt;&amp;1 &amp;</code></pre>
+<p>查看日志：</p>
+<pre><code class="language-shell">tail -f /opt/xtrabackup-upload.log</code></pre>
+<h3 id="section-11">下载单文件</h3>
+<p>适用场景：恢复备份、回拉单个对象到本地服务器。</p>
+<pre><code class="language-shell">ossutil cp \
+  oss://example-backup/site-a/2025-12-11/2025-12-11-full.tar.zst \
+  /BF/xtrabackup/2025-12-11/2025-12-11-full.tar.zst</code></pre>
+<p>后台下载：</p>
+<pre><code class="language-shell">nohup ossutil cp \
+  oss://example-backup/site-a/2025-12-11/2025-12-11-full.tar.zst \
+  /BF/xtrabackup/2025-12-11/2025-12-11-full.tar.zst \
+  &gt; /opt/xtrabackup-download.log 2&gt;&amp;1 &amp;</code></pre>
+<h2 id="section-12">目录传输方案</h2>
+<h3 id="section-13">方案一：<code>cp -r</code> 递归上传</h3>
+<p>适用场景：一次性上传整个目录，对历史对象是否变化不敏感。</p>
+<pre><code class="language-shell">ossutil cp -r /BF/xtrabackup/2025-12-11/ \
+  oss://example-backup/site-a/2025-12-11/</code></pre>
+<p>特点：</p>
+<ul class="article-list">
+<li class="list-depth-0">命令直接</li>
+<li class="list-depth-0">适合初次上传完整目录</li>
+</ul>
+<h3 id="section-14">方案二：<code>sync</code> 目录同步</h3>
+<p>适用场景：需要重复执行、增量更新、长期同步目录内容。</p>
+<pre><code class="language-shell">ossutil sync /BF/xtrabackup/2025-12-11/ \
+  oss://example-backup/site-a/2025-12-11/</code></pre>
+<p>特点：</p>
+<ul class="article-list">
+<li class="list-depth-0">更适合持续同步</li>
+<li class="list-depth-0">重复执行更方便</li>
+</ul>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">首次整体上传可优先使用 <code>cp -r</code>。</li>
+<li class="list-depth-0">周期性备份同步、补传和增量更新建议使用 <code>sync</code>。</li>
+</ul>
+<h2 id="section-15">传输后校验</h2>
+<p>对象传输完成后，建议至少完成以下检查。</p>
+<h3 id="section-16">列出对象</h3>
+<pre><code class="language-shell">ossutil ls oss://example-backup/site-a/2025-12-11/</code></pre>
+<h3 id="section-17">查看对象属性</h3>
+<pre><code class="language-shell">ossutil stat oss://example-backup/site-a/2025-12-11/2025-12-11-full.tar.zst</code></pre>
+<h3 id="section-18">计算本地哈希</h3>
+<pre><code class="language-shell">ossutil hash /BF/xtrabackup/2025-12-11/2025-12-11-full.tar.zst</code></pre>
+<p>建议确认：</p>
+<ul class="article-list">
+<li class="list-depth-0">目标对象是否存在</li>
+<li class="list-depth-0">文件大小是否符合预期</li>
+<li class="list-depth-0">关键备份文件是否需要额外做哈希校验</li>
+</ul>
+<h2 id="section-19">备份场景推荐流程</h2>
+<pre><code class="language-shell">nohup ossutil cp \
+  /BF/xtrabackup/2025-12-11/2025-12-11-full.tar.zst \
+  oss://example-backup/site-a/2025-12-11/2025-12-11-full.tar.zst \
+  &gt; /opt/xtrabackup-upload.log 2&gt;&amp;1 &amp;</code></pre>
+<p>推荐执行顺序：</p>
+<ol class="article-list">
+<li class="list-depth-0">在本地完成备份打包，并确认文件已写入完成。</li>
+<li class="list-depth-0">执行后台上传命令，避免终端断开导致任务中止。</li>
+<li class="list-depth-0">通过 <code>tail -f</code> 持续观察日志输出。</li>
+<li class="list-depth-0">上传结束后执行 <code>ossutil stat</code> 或 <code>ossutil ls</code> 确认对象已生成。</li>
+<li class="list-depth-0">对关键备份执行哈希校验，确保内容完整。</li>
+</ol>
+<h2 id="section-20">常用命令速查</h2>
+<pre><code class="language-shell">ossutil ls oss://bucket/
+ossutil stat oss://bucket/path/file
+ossutil cp local-file oss://bucket/path/file
+ossutil cp oss://bucket/path/file local-file
+ossutil cp -r local-dir/ oss://bucket/path/
+ossutil sync local-dir/ oss://bucket/path/
+ossutil rm oss://bucket/path/file
+ossutil rm -r oss://bucket/path/
+ossutil du oss://bucket/path/
+ossutil presign oss://bucket/path/file</code></pre>
+<p>其他常见子命令：</p>
+<pre><code class="language-text">mb
+rb
+mkdir
+append
+cat
+set-props
+restore
+revert
+hash</code></pre>
+<h2 id="section-21">常见问题与排查</h2>
+<h3 id="section-22">Bucket Endpoint 不匹配</h3>
+<p>现象：</p>
+<pre><code class="language-text">The bucket you are attempting to access must be addressed using the specified endpoint</code></pre>
+<p>处理方式：</p>
+<ul class="article-list">
+<li class="list-depth-0">登录 OSS 控制台确认 Bucket 地域。</li>
+<li class="list-depth-0">重新检查 <code>Region</code> 和 <code>Endpoint</code> 是否对应。</li>
+<li class="list-depth-0">内网与公网 Endpoint 不要混用到错误地域。</li>
+</ul>
+<h3 id="section-23">上传慢或传输失败</h3>
+<p>优先排查：</p>
+<ul class="article-list">
+<li class="list-depth-0">是否误用了公网 Endpoint</li>
+<li class="list-depth-0">ECS 与 OSS 是否处于同地域</li>
+<li class="list-depth-0">服务器磁盘空间是否充足</li>
+<li class="list-depth-0">日志中是否存在超时、网络中断或权限报错</li>
+</ul>
+<h3 id="section-24"><code>AccessDenied</code></h3>
+<p>常见原因：</p>
+<ul class="article-list">
+<li class="list-depth-0">AccessKey 配置错误</li>
+<li class="list-depth-0">RAM 权限不足</li>
+<li class="list-depth-0">Bucket 策略限制访问</li>
+</ul>
+<p>处理建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">重新执行 <code>ossutil config</code> 校验凭证</li>
+<li class="list-depth-0">检查 RAM 授权策略是否具备目标 Bucket 的读写权限</li>
+<li class="list-depth-0">检查 Bucket Policy、对象 ACL 和网络访问限制</li>
+</ul>
+<h2 id="section-25">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">后台执行时应为上传和下载分别使用不同日志文件，便于区分任务状态。</li>
+<li class="list-depth-0">大文件传输前先确认目标目录和本地磁盘空间，避免中途中断。</li>
+<li class="list-depth-0">使用内网 Endpoint 的前提是服务器网络路径确实可达内网 OSS 地址。</li>
+<li class="list-depth-0">关键数据恢复前，建议先下载到临时目录完成校验，再投入正式使用。</li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>
