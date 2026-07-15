@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="通过最小权限 RBAC、多集群 kubeconfig 和 Gateway API，为 Headlamp 建立受控的只读访问入口。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Headlamp 多集群只读接入与发布手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-4" />
+    <script src="/assets/js/main.js?v=20260715-batch-4" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Kubernetes</p>
+        <h1>Headlamp 多集群只读接入与发布手册</h1>
+        <p class="article-lead">通过最小权限 RBAC、多集群 kubeconfig 和 Gateway API，为 Headlamp 建立受控的只读访问入口。</p>
+        <div class="article-info"><span>技术手册</span><span>约 13 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-kubernetes" aria-hidden="true">
+        <div class="article-cover-inner"><span>KUBERNETES</span><strong>HLM</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-3" href="#section-3">组件与命名</a>
+          <a class="toc-level-3" href="#section-4">已使用的集群示例</a>
+          <a class="toc-level-2" href="#section-5">推荐架构</a>
+          <a class="toc-level-2" href="#section-6">只读权限配置</a>
+          <a class="toc-level-3" href="#section-7">适用场景</a>
+          <a class="toc-level-3" href="#section-8">推荐 YAML</a>
+          <a class="toc-level-3" href="#section-9">创建命令</a>
+          <a class="toc-level-2" href="#section-10">获取多集群访问凭据</a>
+          <a class="toc-level-3" href="#section-11">1. 获取 API Server 地址</a>
+          <a class="toc-level-3" href="#section-12">2. 获取集群 CA</a>
+          <a class="toc-level-3" href="#section-13">3. 获取访问 Token</a>
+          <a class="toc-level-2" href="#section-14">多集群 kubeconfig 组装</a>
+          <a class="toc-level-3" href="#section-15">适用场景</a>
+          <a class="toc-level-3" href="#section-16">推荐结构</a>
+          <a class="toc-level-3" href="#section-17">选择建议</a>
+          <a class="toc-level-2" href="#section-18">Headlamp 部署</a>
+          <a class="toc-level-3" href="#section-19">部署思路</a>
+          <a class="toc-level-3" href="#section-20">创建命名空间与 Secret</a>
+          <a class="toc-level-3" href="#section-21">安装 Headlamp</a>
+          <a class="toc-level-3" href="#section-22">关键参数说明</a>
+          <a class="toc-level-2" href="#section-23">对外发布</a>
+          <a class="toc-level-3" href="#section-24">适用场景</a>
+          <a class="toc-level-3" href="#section-25">HTTPRoute 示例</a>
+          <a class="toc-level-3" href="#section-26">认证处理建议</a>
+          <a class="toc-level-2" href="#section-27">多方案与适用场景</a>
+          <a class="toc-level-3" href="#section-28">方案一：单集群只读接入</a>
+          <a class="toc-level-3" href="#section-29">方案二：多集群统一接入</a>
+          <a class="toc-level-3" href="#section-30">选择建议</a>
+          <a class="toc-level-2" href="#section-31">注意事项</a>
+          <a class="toc-level-2" href="#section-32">常见问题与排查方式</a>
+          <a class="toc-level-3" href="#section-33">1. Headlamp 页面无法列出资源</a>
+          <a class="toc-level-3" href="#section-34">2. 无法获取 token</a>
+          <a class="toc-level-3" href="#section-35">3. Headlamp Pod 已启动，但仍未使用外部 kubeconfig</a>
+          <a class="toc-level-3" href="#section-36">4. 域名无法访问</a>
+          <a class="toc-level-2" href="#section-37">最小实施步骤</a>
+          <a class="toc-level-2" href="#section-38">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>令牌提示：本文采用最小权限 RBAC。Kubernetes 1.24 及以后，临时登录优先使用 kubectl create token 获取有期限 Token；只有确需长期外部 kubeconfig 时才考虑手工 ServiceAccount Token Secret，并建立轮换、吊销、加密存储和审计机制。不要把 kubeconfig 或 Token 提交到仓库。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>本文档用于为 Kubernetes 集群部署 Headlamp 多集群只读访问能力，目标包括：</p>
+<ul class="article-list">
+<li class="list-depth-0">在每个目标集群中创建统一的只读访问账号与权限。</li>
+<li class="list-depth-0">提取访问所需的 <code>server</code>、<code>CA</code> 与 <code>token</code>，组装为多集群 <code>kubeconfig</code>。</li>
+<li class="list-depth-0">以外置 <code>kubeconfig</code> 的方式部署 Headlamp，避免依赖集群内默认高权限访问。</li>
+<li class="list-depth-0">通过 Gateway API 将 Headlamp 以 HTTP 服务形式对外发布。</li>
+</ul>
+<p>该方案适用于需要统一查看多个集群资源，但不希望授予变更权限的场景。</p>
+<h2 id="section-2">环境说明</h2>
+<h3 id="section-3">组件与命名</h3>
+<ul class="article-list">
+<li class="list-depth-0">只读账号命名空间：<code>headlamp-system</code></li>
+<li class="list-depth-0">只读 ServiceAccount：<code>headlamp-viewer</code></li>
+<li class="list-depth-0">只读 ClusterRole：<code>headlamp-readonly-global</code></li>
+<li class="list-depth-0">Headlamp 部署命名空间：<code>headlamp</code></li>
+<li class="list-depth-0">对外域名示例：<code>headlamp.example.com</code></li>
+<li class="list-depth-0">Gateway 示例：</li>
+<li class="list-depth-1">名称：<code>shared-gateway</code></li>
+<li class="list-depth-1">命名空间：<code>nginx-gateway</code></li>
+</ul>
+<h3 id="section-4">已使用的集群示例</h3>
+<ul class="article-list">
+<li class="list-depth-0"><code>cluster-a</code></li>
+<li class="list-depth-0"><code>cluster-b</code></li>
+</ul>
+<h2 id="section-5">推荐架构</h2>
+<p>推荐将“凭据生成”和“应用部署”分离：</p>
+<ol class="article-list">
+<li class="list-depth-0">在每个目标集群中创建只读账号。</li>
+<li class="list-depth-0">从每个目标集群提取只读访问凭据。</li>
+<li class="list-depth-0">将多个集群凭据合并为一个多上下文 <code>kubeconfig</code>。</li>
+<li class="list-depth-0">将该 <code>kubeconfig</code> 作为 Secret 挂载到 Headlamp 容器。</li>
+<li class="list-depth-0">将 Headlamp 以 <code>ClusterIP</code> 方式部署，再通过 Gateway API 暴露。</li>
+</ol>
+<p>这样做的优点：</p>
+<ul class="article-list">
+<li class="list-depth-0">Headlamp 不依赖所在集群的默认 ServiceAccount 权限。</li>
+<li class="list-depth-0">多集群接入方式清晰，可独立增删目标集群。</li>
+<li class="list-depth-0">权限边界明确，默认仅允许查看资源。</li>
+</ul>
+<h2 id="section-6">只读权限配置</h2>
+<h3 id="section-7">适用场景</h3>
+<p>适用于希望让 Headlamp 统一查看多个集群的只读资源信息，包括：</p>
+<ul class="article-list">
+<li class="list-depth-0">集群基础信息</li>
+<li class="list-depth-0">工作负载</li>
+<li class="list-depth-0">网络资源</li>
+<li class="list-depth-0">存储资源</li>
+<li class="list-depth-0">指标与事件</li>
+</ul>
+<h3 id="section-8">推荐 YAML</h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: headlamp-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-viewer
+  namespace: headlamp-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: headlamp-readonly-global
+rules:
+- apiGroups: [&quot;&quot;]
+  resources:
+    - namespaces
+    - nodes
+    - pods
+    - pods/log
+    - services
+    - endpoints
+    - persistentvolumes
+    - persistentvolumeclaims
+    - configmaps
+    - events
+    - limitranges
+    - resourcequotas
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;apps&quot;]
+  resources:
+    - deployments
+    - replicasets
+    - daemonsets
+    - statefulsets
+    - controllerrevisions
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;batch&quot;]
+  resources:
+    - jobs
+    - cronjobs
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;autoscaling&quot;]
+  resources:
+    - horizontalpodautoscalers
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;networking.k8s.io&quot;]
+  resources:
+    - ingresses
+    - ingressclasses
+    - networkpolicies
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;discovery.k8s.io&quot;]
+  resources:
+    - endpointslices
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;storage.k8s.io&quot;]
+  resources:
+    - storageclasses
+    - csidrivers
+    - csinodes
+    - volumeattachments
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;policy&quot;]
+  resources:
+    - poddisruptionbudgets
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;metrics.k8s.io&quot;]
+  resources:
+    - nodes
+    - pods
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+
+- apiGroups: [&quot;events.k8s.io&quot;]
+  resources:
+    - events
+  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-readonly-global
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: headlamp-readonly-global
+subjects:
+- kind: ServiceAccount
+  name: headlamp-viewer
+  namespace: headlamp-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: headlamp-viewer-token
+  namespace: headlamp-system
+  annotations:
+    kubernetes.io/service-account.name: headlamp-viewer
+type: kubernetes.io/service-account-token</code></pre>
+<h3 id="section-9">创建命令</h3>
+<p>在每个目标集群执行：</p>
+<pre><code class="language-bash">kubectl apply -f headlamp-只读账号.yaml</code></pre>
+<h2 id="section-10">获取多集群访问凭据</h2>
+<p>在每个目标集群创建完只读账号后，分别提取以下信息。</p>
+<h3 id="section-11">1. 获取 API Server 地址</h3>
+<pre><code class="language-bash">kubectl config view --minify -o jsonpath=&#39;{.clusters[0].cluster.server}&#39;; echo</code></pre>
+<h3 id="section-12">2. 获取集群 CA</h3>
+<p>输出为 Base64 编码内容，可直接写入 <code>certificate-authority-data</code>：</p>
+<pre><code class="language-bash">kubectl -n headlamp-system get secret headlamp-viewer-token -o jsonpath=&#39;{.data.ca\.crt}&#39;; echo</code></pre>
+<h3 id="section-13">3. 获取访问 Token</h3>
+<pre><code class="language-bash">kubectl -n headlamp-system get secret headlamp-viewer-token -o jsonpath=&#39;{.data.token}&#39; | base64 -d; echo</code></pre>
+<h2 id="section-14">多集群 kubeconfig 组装</h2>
+<h3 id="section-15">适用场景</h3>
+<ul class="article-list">
+<li class="list-depth-0">需要一个 Headlamp 统一查看多个 Kubernetes 集群。</li>
+<li class="list-depth-0">每个集群使用独立只读凭据。</li>
+<li class="list-depth-0">希望通过切换 <code>context</code> 区分不同集群。</li>
+</ul>
+<h3 id="section-16">推荐结构</h3>
+<p>建议按“集群、用户、上下文”三段组织，例如：</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Config
+clusters:
+- name: cluster-a
+  cluster:
+    server: https://&lt;cluster-a-apiserver&gt;:6443
+    certificate-authority-data: &lt;base64-ca&gt;
+
+- name: cluster-b
+  cluster:
+    server: https://&lt;cluster-b-apiserver&gt;:6443
+    certificate-authority-data: &lt;base64-ca&gt;
+
+users:
+- name: cluster-a-headlamp
+  user:
+    token: &lt;readonly-token&gt;
+
+- name: cluster-b-headlamp
+  user:
+    token: &lt;readonly-token&gt;
+
+contexts:
+- name: cluster-a
+  context:
+    cluster: cluster-a
+    user: cluster-a-headlamp
+
+- name: cluster-b
+  context:
+    cluster: cluster-b
+    user: cluster-b-headlamp
+
+current-context: cluster-a</code></pre>
+<h3 id="section-17">选择建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">单集群接入：可以仅保留一个 <code>cluster</code>、一个 <code>user</code>、一个 <code>context</code>。</li>
+<li class="list-depth-0">多集群接入：推荐统一维护一个多上下文 <code>kubeconfig</code>，便于 Headlamp 集中展示。</li>
+</ul>
+<p>如果新增集群，按相同格式补充三段配置即可，无需改动 Headlamp 安装方式。</p>
+<h2 id="section-18">Headlamp 部署</h2>
+<h3 id="section-19">部署思路</h3>
+<p>部署时关闭集群内凭据依赖，改为显式挂载外置 <code>kubeconfig</code>。这是本方案的推荐配置，优先于直接依赖 Pod 默认身份的方式。</p>
+<h3 id="section-20">创建命名空间与 Secret</h3>
+<pre><code class="language-bash">kubectl -n headlamp create namespace headlamp --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl -n headlamp create secret generic headlamp-kubeconfig \
+  --from-file=config=./headlamp-multicluster-kubeconfig</code></pre>
+<h3 id="section-21">安装 Headlamp</h3>
+<pre><code class="language-bash">helm repo add headlamp https://kubernetes-sigs.github.io/headlamp/
+helm repo update
+
+helm upgrade --install headlamp headlamp/headlamp \
+  -n headlamp \
+  --create-namespace \
+  --set config.inCluster=false \
+  --set clusterRoleBinding.create=false \
+  --set serviceAccount.create=true \
+  --set automountServiceAccountToken=false \
+  --set service.type=ClusterIP \
+  --set-json &#39;env=[{&quot;name&quot;:&quot;KUBECONFIG&quot;,&quot;value&quot;:&quot;/home/headlamp/.config/Headlamp/kubeconfigs/config&quot;}]&#39; \
+  --set-json &#39;volumeMounts=[{&quot;name&quot;:&quot;kcfg&quot;,&quot;mountPath&quot;:&quot;/home/headlamp/.config/Headlamp/kubeconfigs&quot;,&quot;readOnly&quot;:true}]&#39; \
+  --set-json &#39;volumes=[{&quot;name&quot;:&quot;kcfg&quot;,&quot;secret&quot;:{&quot;secretName&quot;:&quot;headlamp-kubeconfig&quot;}}]&#39;</code></pre>
+<h3 id="section-22">关键参数说明</h3>
+<ul class="article-list">
+<li class="list-depth-0"><code>config.inCluster=false</code></li>
+<li class="list-depth-1">禁用集群内自动配置，强制使用挂载的 <code>kubeconfig</code>。</li>
+<li class="list-depth-0"><code>clusterRoleBinding.create=false</code></li>
+<li class="list-depth-1">不为 Headlamp 自身额外创建高权限绑定，权限由外部 <code>kubeconfig</code> 决定。</li>
+<li class="list-depth-0"><code>automountServiceAccountToken=false</code></li>
+<li class="list-depth-1">避免 Pod 自动挂载默认令牌，减少误用集群内身份的风险。</li>
+<li class="list-depth-0"><code>service.type=ClusterIP</code></li>
+<li class="list-depth-1">建议通过网关统一暴露，不直接使用 NodePort。</li>
+</ul>
+<h2 id="section-23">对外发布</h2>
+<h3 id="section-24">适用场景</h3>
+<p>适用于集群已部署 Gateway API 与对应网关控制器，需要以统一域名方式发布 Headlamp。</p>
+<h3 id="section-25">HTTPRoute 示例</h3>
+<pre><code class="language-bash">kubectl apply -f - &lt;&lt;&#39;EOF&#39;
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: headlamp
+  namespace: headlamp
+spec:
+  parentRefs:
+    - name: shared-gateway
+      namespace: nginx-gateway
+  hostnames:
+    - &quot;headlamp.example.com&quot;
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: headlamp
+          port: 80
+EOF</code></pre>
+<h3 id="section-26">认证处理建议</h3>
+<p>当前路由示例仅完成转发。若 Headlamp 需要对外开放访问，建议在网关层追加认证能力，例如统一接入认证代理、基本认证或企业 SSO。适合以下场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">内网环境但仍需基本保护</li>
+<li class="list-depth-0">面向运维团队开放，需要统一身份认证</li>
+<li class="list-depth-0">需要保留访问审计能力</li>
+</ul>
+<p>如果仅限受控内网访问，可先保留纯转发配置；如果面向更广用户范围，建议优先补齐认证。</p>
+<h2 id="section-27">多方案与适用场景</h2>
+<h3 id="section-28">方案一：单集群只读接入</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">仅管理一个集群</li>
+<li class="list-depth-0">想快速验证 Headlamp 可用性</li>
+</ul>
+<p>特点：</p>
+<ul class="article-list">
+<li class="list-depth-0">配置简单</li>
+<li class="list-depth-0">排障路径最短</li>
+<li class="list-depth-0">后续扩展到多集群时需要补充更多上下文</li>
+</ul>
+<h3 id="section-29">方案二：多集群统一接入</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">同时查看测试、生产或多云集群</li>
+<li class="list-depth-0">希望在一个 UI 中切换多个 Kubernetes 环境</li>
+</ul>
+<p>特点：</p>
+<ul class="article-list">
+<li class="list-depth-0">更适合长期运维</li>
+<li class="list-depth-0">需要规范管理多个 <code>server</code>、<code>CA</code> 与 <code>token</code></li>
+<li class="list-depth-0">建议统一命名 <code>cluster</code>、<code>user</code>、<code>context</code></li>
+</ul>
+<h3 id="section-30">选择建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">仅临时使用：优先单集群方案。</li>
+<li class="list-depth-0">持续运维与统一入口：优先多集群方案。</li>
+</ul>
+<p>从已有配置方式看，多集群外置 <code>kubeconfig</code> 是更合理的主方案，既保留了权限隔离，也便于增量接入新集群。</p>
+<h2 id="section-31">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0"><code>headlamp-system</code> 与 <code>headlamp</code> 分工不同：</li>
+<li class="list-depth-1"><code>headlamp-system</code> 用于只读凭据与授权对象。</li>
+<li class="list-depth-1"><code>headlamp</code> 用于部署应用本身。</li>
+<li class="list-depth-0">手工创建的 <code>kubernetes.io/service-account-token</code> Secret 依赖集群控制面自动回填数据，若 Secret 中未生成 <code>token</code> 或 <code>ca.crt</code>，需先确认对应 ServiceAccount 是否已正确创建。</li>
+<li class="list-depth-0"><code>metrics.k8s.io</code> 资源需要集群已安装 Metrics Server，否则 Headlamp 中指标视图可能为空。</li>
+<li class="list-depth-0">若网关侧未加认证，不建议直接暴露到不受控网络。</li>
+<li class="list-depth-0">多集群 <code>kubeconfig</code> 中的 <code>current-context</code> 只决定默认上下文，不影响 Headlamp 识别多个集群。</li>
+<li class="list-depth-0">涉及 <code>token</code>、<code>CA</code>、<code>server</code> 的文件应按敏感配置管理，避免进入公共仓库或被无权限人员读取。</li>
+</ul>
+<h2 id="section-32">常见问题与排查方式</h2>
+<h3 id="section-33">1. Headlamp 页面无法列出资源</h3>
+<p>检查项：</p>
+<pre><code class="language-bash">kubectl --kubeconfig=./headlamp-multicluster-kubeconfig get ns
+kubectl --kubeconfig=./headlamp-multicluster-kubeconfig auth can-i get pods -A
+kubectl --kubeconfig=./headlamp-multicluster-kubeconfig auth can-i list deployments -A</code></pre>
+<p>排查重点：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>token</code> 是否正确</li>
+<li class="list-depth-0"><code>certificate-authority-data</code> 是否匹配目标集群</li>
+<li class="list-depth-0"><code>ClusterRoleBinding</code> 是否绑定到 <code>headlamp-viewer</code></li>
+</ul>
+<h3 id="section-34">2. 无法获取 token</h3>
+<p>检查项：</p>
+<pre><code class="language-bash">kubectl -n headlamp-system get sa headlamp-viewer
+kubectl -n headlamp-system get secret headlamp-viewer-token -o yaml</code></pre>
+<p>排查重点：</p>
+<ul class="article-list">
+<li class="list-depth-0">Secret 注解 <code>kubernetes.io/service-account.name</code> 是否正确</li>
+<li class="list-depth-0">Secret 类型是否为 <code>kubernetes.io/service-account-token</code></li>
+<li class="list-depth-0">ServiceAccount 与 Secret 是否在同一命名空间</li>
+</ul>
+<h3 id="section-35">3. Headlamp Pod 已启动，但仍未使用外部 kubeconfig</h3>
+<p>检查项：</p>
+<pre><code class="language-bash">kubectl -n headlamp get pod
+kubectl -n headlamp get secret headlamp-kubeconfig
+kubectl -n headlamp describe deploy headlamp</code></pre>
+<p>排查重点：</p>
+<ul class="article-list">
+<li class="list-depth-0">是否已挂载 <code>headlamp-kubeconfig</code> Secret</li>
+<li class="list-depth-0"><code>KUBECONFIG</code> 环境变量路径是否与挂载路径一致</li>
+<li class="list-depth-0">Helm 参数是否被后续升级覆盖</li>
+</ul>
+<h3 id="section-36">4. 域名无法访问</h3>
+<p>检查项：</p>
+<pre><code class="language-bash">kubectl -n headlamp get httproute headlamp
+kubectl -n nginx-gateway get gateway shared-gateway
+kubectl -n headlamp get svc headlamp</code></pre>
+<p>排查重点：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>HTTPRoute</code> 是否成功绑定到目标 Gateway</li>
+<li class="list-depth-0">域名解析是否正确</li>
+<li class="list-depth-0">网关控制器是否已接管并下发配置</li>
+</ul>
+<h2 id="section-37">最小实施步骤</h2>
+<pre><code class="language-bash">kubectl apply -f headlamp-只读账号.yaml
+kubectl config view --minify -o jsonpath=&#39;{.clusters[0].cluster.server}&#39;; echo
+kubectl -n headlamp-system get secret headlamp-viewer-token -o jsonpath=&#39;{.data.ca\.crt}&#39;; echo
+kubectl -n headlamp-system get secret headlamp-viewer-token -o jsonpath=&#39;{.data.token}&#39; | base64 -d; echo
+
+kubectl -n headlamp create namespace headlamp --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n headlamp create secret generic headlamp-kubeconfig \
+  --from-file=config=./headlamp-multicluster-kubeconfig
+
+helm repo add headlamp https://kubernetes-sigs.github.io/headlamp/
+helm repo update
+helm upgrade --install headlamp headlamp/headlamp \
+  -n headlamp \
+  --create-namespace \
+  --set config.inCluster=false \
+  --set clusterRoleBinding.create=false \
+  --set serviceAccount.create=true \
+  --set automountServiceAccountToken=false \
+  --set service.type=ClusterIP \
+  --set-json &#39;env=[{&quot;name&quot;:&quot;KUBECONFIG&quot;,&quot;value&quot;:&quot;/home/headlamp/.config/Headlamp/kubeconfigs/config&quot;}]&#39; \
+  --set-json &#39;volumeMounts=[{&quot;name&quot;:&quot;kcfg&quot;,&quot;mountPath&quot;:&quot;/home/headlamp/.config/Headlamp/kubeconfigs&quot;,&quot;readOnly&quot;:true}]&#39; \
+  --set-json &#39;volumes=[{&quot;name&quot;:&quot;kcfg&quot;,&quot;secret&quot;:{&quot;secretName&quot;:&quot;headlamp-kubeconfig&quot;}}]&#39;</code></pre>
+<p>至此即可完成 Headlamp 多集群只读接入的核心部署。</p>
+<h2 id="section-38">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://headlamp.dev/docs/latest/installation/" target="_blank" rel="noreferrer">Headlamp 安装与认证文档</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

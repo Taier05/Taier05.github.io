@@ -6,9 +6,72 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260715-batch-3';
+const assetVersion = '20260715-batch-4';
 
 const posts = [
+  {
+    sourceTitle: 'Gitea部署与迁移配置手册',
+    title: 'Gitea 部署、发布与仓库迁移手册',
+    slug: 'gitea-deployment-migration', category: '平台运维', symbol: 'GIT',
+    summary: '对比 Helm 与 Docker Compose 部署方式，覆盖 Gateway API 发布、迁移白名单、安全配置和常见故障排查。',
+    tags: ['Gitea', '迁移']
+  },
+  {
+    sourceTitle: 'RedisInsight 内网部署与访问控制配置手册',
+    title: 'RedisInsight 内网部署与访问控制手册',
+    slug: 'redisinsight-intranet', category: 'Redis', symbol: 'UI',
+    summary: '使用 Docker Compose 部署 RedisInsight，并通过 Nginx Basic Auth、网络限制和凭据隔离收紧访问边界。',
+    tags: ['RedisInsight', '访问控制']
+  },
+  {
+    sourceTitle: 'MySQL GTID主从复制部署与故障处理手册',
+    title: 'MySQL GTID 复制部署与故障处理手册',
+    slug: 'mysql-gtid-replication', category: 'MySQL', symbol: 'GTID',
+    summary: '覆盖 MySQL 8.0 GTID 与位点复制配置、初始化、状态验证，以及中继日志和异常事务处理。',
+    tags: ['GTID', '复制']
+  },
+  {
+    sourceTitle: 'Headlamp 多集群只读接入与发布手册',
+    title: 'Headlamp 多集群只读接入与发布手册',
+    slug: 'headlamp-multi-cluster-readonly', category: 'Kubernetes', symbol: 'HLM',
+    summary: '通过最小权限 RBAC、多集群 kubeconfig 和 Gateway API，为 Headlamp 建立受控的只读访问入口。',
+    tags: ['Headlamp', 'RBAC']
+  },
+  {
+    sourceTitle: 'Helm 与 ChartMuseum 私有仓库部署操作手册',
+    title: 'Helm 与 ChartMuseum 私有仓库操作手册',
+    slug: 'helm-chartmuseum-repository', category: 'Kubernetes', symbol: 'HELM',
+    summary: '整理 Helm 仓库、Chart 生命周期、ChartMuseum 部署与推送流程，并补充认证、TLS 和存储安全建议。',
+    tags: ['Helm', 'ChartMuseum']
+  },
+  {
+    sourceTitle: 'RedisShake 实时同步部署与配置手册',
+    title: 'RedisShake 实时同步部署与配置手册',
+    slug: 'redisshake-realtime-sync', category: 'Redis', symbol: 'SYNC',
+    summary: '使用 sync_reader 和 redis_writer 实现 Redis 全量加增量同步，说明冲突键、版本兼容和割接验证策略。',
+    tags: ['RedisShake', '数据迁移']
+  },
+  {
+    sourceTitle: 'Kubernetes 中 ProxySQL 读写分离部署与运维手册',
+    title: 'Kubernetes 中部署 ProxySQL 读写分离',
+    slug: 'proxysql-kubernetes-read-write-split', category: 'MySQL', symbol: 'PXY',
+    summary: '在 Kubernetes 中部署 ProxySQL，配置后端主从、查询路由、业务入口，并验证读写落点与故障回落。',
+    tags: ['ProxySQL', '读写分离']
+  },
+  {
+    sourceTitle: 'Rook-Ceph 生产部署与分层存储运维手册',
+    title: 'Rook-Ceph 生产部署与分层存储运维手册',
+    slug: 'rook-ceph-production-storage', category: 'Kubernetes', symbol: 'CEPH',
+    summary: '覆盖 Rook-Ceph 部署、SSD/HDD 分层池、Gateway、对象存储、容量规划及 OSD 安全更换流程。',
+    tags: ['Rook-Ceph', '存储']
+  },
+  {
+    sourceTitle: 'MySQL备份与恢复操作手册',
+    title: 'MySQL 备份与恢复操作手册',
+    slug: 'mysql-backup-restore', category: 'MySQL', symbol: 'BAK',
+    summary: '对比 mysqldump 与 Percona XtraBackup，整理全量、增量备份、恢复链合并和恢复验证流程。',
+    tags: ['备份', 'XtraBackup']
+  },
   {
     sourceTitle: 'Nightingale 监控平台部署与扩展采集手册',
     title: 'Kubernetes 中部署 Nightingale 与扩展采集',

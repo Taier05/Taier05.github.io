@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="在 Kubernetes 中部署 ProxySQL，配置后端主从、查询路由、业务入口，并验证读写落点与故障回落。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Kubernetes 中部署 ProxySQL 读写分离 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-4" />
+    <script src="/assets/js/main.js?v=20260715-batch-4" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">MySQL</p>
+        <h1>Kubernetes 中部署 ProxySQL 读写分离</h1>
+        <p class="article-lead">在 Kubernetes 中部署 ProxySQL，配置后端主从、查询路由、业务入口，并验证读写落点与故障回落。</p>
+        <div class="article-info"><span>技术手册</span><span>约 14 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-mysql" aria-hidden="true">
+        <div class="article-cover-inner"><span>MYSQL</span><strong>PXY</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">部署步骤</a>
+          <a class="toc-level-3" href="#section-4">1. 创建部署清单</a>
+          <a class="toc-level-3" href="#section-5">2. 应用资源</a>
+          <a class="toc-level-2" href="#section-6">管理连接方式</a>
+          <a class="toc-level-3" href="#section-7">方式一：直接进入 Pod 执行管理命令</a>
+          <a class="toc-level-3" href="#section-8">方式二：先进入容器再连接管理端口</a>
+          <a class="toc-level-2" href="#section-9">业务访问方案</a>
+          <a class="toc-level-3" href="#section-10">集群内访问</a>
+          <a class="toc-level-3" href="#section-11">LoadBalancer 暴露</a>
+          <a class="toc-level-3" href="#section-12">NodePort 临时验证</a>
+          <a class="toc-level-2" href="#section-13">读写分离验证</a>
+          <a class="toc-level-3" href="#section-14">验证读请求是否进入读组</a>
+          <a class="toc-level-3" href="#section-15">验证写请求和锁定查询是否进入写组</a>
+          <a class="toc-level-2" href="#section-16">路由规则说明</a>
+          <a class="toc-level-2" href="#section-17">监控与高可用要点</a>
+          <a class="toc-level-3" href="#section-18">主从识别</a>
+          <a class="toc-level-3" href="#section-19">读组故障回落</a>
+          <a class="toc-level-3" href="#section-20">副本部署建议</a>
+          <a class="toc-level-2" href="#section-21">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-22">1. 业务连接命中了错误的命名空间域名</a>
+          <a class="toc-level-3" href="#section-23">2. 普通查询落到了主库</a>
+          <a class="toc-level-3" href="#section-24">3. 锁定读没有进入写组</a>
+          <a class="toc-level-3" href="#section-25">4. 管理端口可连通但业务端口不可用</a>
+          <a class="toc-level-2" href="#section-26">安全与运维建议</a>
+          <a class="toc-level-2" href="#section-27">推荐执行顺序</a>
+          <a class="toc-level-2" href="#section-28">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>安全与一致性提示：本文已移除 ProxySQL 管理、监控和业务凭据。配置文件主要用于首次启动引导，ProxySQL 首次运行后磁盘 SQLite 配置可能优先生效；变更后需明确执行 LOAD TO RUNTIME 与 SAVE TO DISK。管理端口只监听本地，业务切流前必须灰度验证读写规则、事务与故障回落。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于在 Kubernetes 集群中部署 ProxySQL，并为 MySQL 主从架构提供以下能力：</p>
+<ul class="article-list">
+<li class="list-depth-0">基于 <code>read_only</code> 自动识别主从角色</li>
+<li class="list-depth-0">将普通 <code>SELECT</code> 路由到读组</li>
+<li class="list-depth-0">将事务锁定查询和写请求路由到写组</li>
+<li class="list-depth-0">对外提供集群内访问、LoadBalancer 暴露及临时 NodePort 验证方式</li>
+<li class="list-depth-0">开启 ProxySQL REST API 指标接口，便于后续监控接入</li>
+</ul>
+<p>当前示例中：</p>
+<ul class="article-list">
+<li class="list-depth-0">写组 hostgroup 为 <code>10</code></li>
+<li class="list-depth-0">读组 hostgroup 为 <code>20</code></li>
+<li class="list-depth-0">通过 <code>mysql_query_rules</code> 实现基础读写分离</li>
+<li class="list-depth-0">当读组不可用时，允许回落到写组</li>
+</ul>
+<h2 id="section-2">环境说明</h2>
+<p>示例部署要点如下：</p>
+<ul class="article-list">
+<li class="list-depth-0">命名空间：<code>proxysql</code></li>
+<li class="list-depth-0">ProxySQL 管理端口：<code>6032</code></li>
+<li class="list-depth-0">ProxySQL 业务端口：<code>6033</code></li>
+<li class="list-depth-0">指标端口：<code>6070</code></li>
+<li class="list-depth-0">副本数：<code>2</code></li>
+<li class="list-depth-0">持久化目录：<code>/var/lib/proxysql</code></li>
+<li class="list-depth-0">Service 暴露方式：</li>
+<li class="list-depth-1"><code>proxysql-headless</code>：集群内直连与 StatefulSet 配套</li>
+<li class="list-depth-1"><code>proxysql</code>：<code>LoadBalancer</code>，适合长期业务接入</li>
+<li class="list-depth-1"><code>proxysql-admin</code>：集群内管理端口访问</li>
+<li class="list-depth-1"><code>proxysql-metrics</code>：集群内指标访问</li>
+</ul>
+<p>MySQL 后端示例：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>mysql.example.internal:3306</code> 同时加入写组和读组</li>
+<li class="list-depth-0"><code>mysql.example.internal:3307-3311</code> 加入读组</li>
+</ul>
+<p>这种配置适用于单主多从场景，其中主库在必要时可承担兜底读流量。</p>
+<h2 id="section-3">部署步骤</h2>
+<h3 id="section-4">1. 创建部署清单</h3>
+<p>以下清单可直接保存为 <code>proxysql.yaml</code> 后执行部署：</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxysql-config
+  namespace: proxysql
+data:
+  proxysql.cnf: |
+    datadir=&quot;/var/lib/proxysql&quot;
+
+    admin_variables=
+    {
+      admin_credentials=&quot;&lt;ADMIN_USER&gt;:&lt;ADMIN_PASSWORD&gt;&quot;
+      mysql_ifaces=&quot;127.0.0.1:6032&quot;
+      refresh_interval=2000
+      web_enabled=false
+      restapi_enabled=true
+      restapi_port=6070
+      prometheus_memory_metrics_interval=60
+    }
+
+    mysql_variables=
+    {
+      threads=4
+      max_connections=5000
+      default_query_delay=0
+      default_query_timeout=36000000
+      have_compress=true
+      poll_timeout=2000
+      interfaces=&quot;0.0.0.0:6033&quot;
+      default_schema=&quot;information_schema&quot;
+      server_version=&quot;8.4&quot;
+      connect_timeout_server=3000
+      monitor_history=60000
+      monitor_connect_interval=15000
+      monitor_ping_interval=10000
+      monitor_read_only_interval=10000
+      monitor_read_only_timeout=500
+      monitor_username=&quot;proxysql_monitor&quot;
+      monitor_password=&quot;&lt;MONITOR_PASSWORD&gt;&quot;
+      monitor_writer_is_also_reader=true
+    }
+
+    mysql_servers =
+    (
+      { hostgroup=10, address=&quot;mysql.example.internal&quot;, port=3306, weight=1,    max_connections=6666, max_replication_lag=0 },
+      { hostgroup=20, address=&quot;mysql.example.internal&quot;, port=3306, weight=1,    max_connections=6666, max_replication_lag=0 },
+      { hostgroup=20, address=&quot;mysql.example.internal&quot;, port=3307, weight=1000, max_connections=6666, max_replication_lag=666 },
+      { hostgroup=20, address=&quot;mysql.example.internal&quot;, port=3308, weight=1000, max_connections=6666, max_replication_lag=666 },
+      { hostgroup=20, address=&quot;mysql.example.internal&quot;, port=3309, weight=1000, max_connections=6666, max_replication_lag=666 },
+      { hostgroup=20, address=&quot;mysql.example.internal&quot;, port=3310, weight=1000, max_connections=6666, max_replication_lag=666 },
+      { hostgroup=20, address=&quot;mysql.example.internal&quot;, port=3311, weight=1000, max_connections=6666, max_replication_lag=666 }
+    )
+
+    mysql_replication_hostgroups =
+    (
+      { writer_hostgroup=10, reader_hostgroup=20, check_type=&quot;read_only&quot;, comment=&quot;mysql主从&quot; }
+    )
+
+    mysql_users =
+    (
+      { username=&quot;app_user&quot;, password=&quot;&lt;APP_USER_PASSWORD&gt;&quot;, default_hostgroup=10, active=1, max_connections=65535 },
+      { username=&quot;app_admin&quot;, password=&quot;&lt;APP_ADMIN_PASSWORD&gt;&quot;,      default_hostgroup=10, active=1, max_connections=65535 }
+    )
+
+    mysql_query_rules =
+    (
+      { rule_id=10, active=1, match_pattern=&quot;^SELECT.*FOR UPDATE&quot;,         destination_hostgroup=10, apply=1 },
+      { rule_id=11, active=1, match_pattern=&quot;^SELECT.*LOCK IN SHARE MODE&quot;, destination_hostgroup=10, apply=1 },
+      { rule_id=20, active=1, match_pattern=&quot;^SELECT&quot;,                     destination_hostgroup=20, apply=1 },
+      { rule_id=30, active=1, match_pattern=&quot;.*&quot;,                          destination_hostgroup=10, apply=1 }
+    )
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: proxysql
+  namespace: proxysql
+  labels:
+    app: proxysql
+spec:
+  serviceName: proxysql-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app: proxysql
+  template:
+    metadata:
+      labels:
+        app: proxysql
+    spec:
+      terminationGracePeriodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: proxysql
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: proxysql
+        image: registry.example.com/database/proxysql:2.7.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: mysql
+          containerPort: 6033
+        - name: admin
+          containerPort: 6032
+        - name: metrics
+          containerPort: 6070
+        volumeMounts:
+        - name: config
+          mountPath: /etc/proxysql.cnf
+          subPath: proxysql.cnf
+        - name: data
+          mountPath: /var/lib/proxysql
+        readinessProbe:
+          tcpSocket:
+            port: 6033
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          timeoutSeconds: 1
+          failureThreshold: 6
+        livenessProbe:
+          tcpSocket:
+            port: 6033
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 1
+          failureThreshold: 6
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: &quot;1&quot;
+            memory: 1Gi
+      volumes:
+      - name: config
+        configMap:
+          name: proxysql-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: nfs-storage
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql-headless
+  namespace: proxysql
+spec:
+  clusterIP: None
+  selector:
+    app: proxysql
+  ports:
+  - name: mysql
+    port: 6033
+    targetPort: 6033
+  - name: admin
+    port: 6032
+    targetPort: 6032
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql
+  namespace: proxysql
+  labels:
+    bgp-lb: &quot;enabled&quot;
+spec:
+  type: LoadBalancer
+  loadBalancerIP: &lt;LOAD_BALANCER_IP&gt;
+  selector:
+    app: proxysql
+  ports:
+  - name: mysql
+    port: 6033
+    targetPort: 6033
+  - name: admin
+    port: 6032
+    targetPort: 6032
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql-admin
+  namespace: proxysql
+spec:
+  type: ClusterIP
+  selector:
+    app: proxysql
+  ports:
+  - name: admin
+    port: 6032
+    targetPort: 6032
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql-metrics
+  namespace: proxysql
+spec:
+  type: ClusterIP
+  selector:
+    app: proxysql
+  ports:
+  - name: metrics
+    port: 6070
+    targetPort: 6070</code></pre>
+<h3 id="section-5">2. 应用资源</h3>
+<pre><code class="language-bash">kubectl apply -f proxysql.yaml</code></pre>
+<h2 id="section-6">管理连接方式</h2>
+<h3 id="section-7">方式一：直接进入 Pod 执行管理命令</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">首次部署后检查配置是否加载成功</li>
+<li class="list-depth-0">不希望额外暴露管理端口</li>
+</ul>
+<pre><code class="language-bash">kubectl -n proxysql exec -it proxysql-0 -- mysql -h 127.0.0.1 -P 6032 -u admin -p</code></pre>
+<h3 id="section-8">方式二：先进入容器再连接管理端口</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">容器内需要顺带执行网络连通性或文件检查</li>
+</ul>
+<pre><code class="language-bash">kubectl -n proxysql exec -it proxysql-0 -- sh
+mysql -h 127.0.0.1 -P 6032 -u admin -p</code></pre>
+<h2 id="section-9">业务访问方案</h2>
+<h3 id="section-10">集群内访问</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">应用本身部署在 Kubernetes 内部</li>
+<li class="list-depth-0">希望通过稳定 Service 名称接入</li>
+</ul>
+<p>推荐 JDBC 连接串：</p>
+<pre><code class="language-text">jdbc:mysql://proxysql-headless.db-proxy.svc.cluster.local:6033/你的库名?useSSL=false&amp;serverTimezone=Asia/Shanghai</code></pre>
+<p>如果 ProxySQL 实际部署在 <code>proxysql</code> 命名空间，则应优先使用与命名空间一致的域名，例如：</p>
+<pre><code class="language-text">jdbc:mysql://proxysql-headless.proxysql.svc.cluster.local:6033/你的库名?useSSL=false&amp;serverTimezone=Asia/Shanghai</code></pre>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">同命名空间内部访问，优先使用当前实际 Service 域名</li>
+<li class="list-depth-0">跨命名空间接入时，务必确认 FQDN 与部署命名空间一致，避免解析错误</li>
+</ul>
+<h3 id="section-11">LoadBalancer 暴露</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">集群外长期接入</li>
+<li class="list-depth-0">已有 BGP、MetalLB 或云厂商 LoadBalancer 能力</li>
+</ul>
+<p>当前配置中：</p>
+<ul class="article-list">
+<li class="list-depth-0">Service 名称：<code>proxysql</code></li>
+<li class="list-depth-0">类型：<code>LoadBalancer</code></li>
+<li class="list-depth-0">固定地址：<code>&lt;LOAD_BALANCER_IP&gt;</code></li>
+</ul>
+<p>这是比临时 NodePort 更适合生产的方式，地址稳定，接入层更清晰。</p>
+<h3 id="section-12">NodePort 临时验证</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">仅用于快速验证读写分离</li>
+<li class="list-depth-0">集群尚未具备对外 LoadBalancer 能力</li>
+</ul>
+<pre><code class="language-bash">cat &lt;&lt;&#39;EOF&#39; | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql-nodeport
+  namespace: proxysql
+spec:
+  type: NodePort
+  selector:
+    app: proxysql
+  ports:
+  - port: 6033
+    targetPort: 6033
+    nodePort: 32577
+EOF</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">NodePort 适合作为临时验证入口</li>
+<li class="list-depth-0">长期使用时，优先选择 <code>LoadBalancer</code></li>
+<li class="list-depth-0">若固定端口 <code>32577</code> 与集群现有端口冲突，需要调整</li>
+</ul>
+<h2 id="section-13">读写分离验证</h2>
+<h3 id="section-14">验证读请求是否进入读组</h3>
+<pre><code class="language-bash">mysql -u app_user -p -h mysql.example.internal -P 32577 -e &quot;SELECT @@hostname, @@server_id, @@server_uuid, @@port, @@read_only;&quot;</code></pre>
+<p>或在集群内部直接测试：</p>
+<pre><code class="language-bash">mysql -u app_user -p -h proxysql-headless.proxysql.svc.cluster.local -P 6033 -e &quot;SELECT @@hostname, @@server_id, @@server_uuid, @@port, @@read_only;&quot;</code></pre>
+<p>判断依据：</p>
+<ul class="article-list">
+<li class="list-depth-0">普通 <code>SELECT</code> 应优先命中读组</li>
+<li class="list-depth-0">返回结果中的 <code>@@port</code>、<code>@@hostname</code>、<code>@@read_only</code> 可用于识别实际落点</li>
+</ul>
+<h3 id="section-15">验证写请求和锁定查询是否进入写组</h3>
+<pre><code class="language-bash">mysql -u app_user -p -h mysql.example.internal -P 32577 -e &quot;
+USE appdb;
+INSERT INTO proxysql_write_test(id) VALUES(2)
+  ON DUPLICATE KEY UPDATE ts=CURRENT_TIMESTAMP;
+SELECT @@hostname, @@server_id, @@read_only;
+START TRANSACTION;
+SELECT COUNT(*) FROM proxysql_write_test FOR UPDATE;
+SELECT @@hostname, @@server_id, @@read_only;
+COMMIT;
+&quot;</code></pre>
+<p>判断依据：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>INSERT</code> 必须落到写组</li>
+<li class="list-depth-0"><code>SELECT ... FOR UPDATE</code> 必须落到写组</li>
+<li class="list-depth-0">如果读组全部不可用，普通查询也可能回落到写组，这是 <code>monitor_writer_is_also_reader=true</code> 的预期行为</li>
+</ul>
+<h2 id="section-16">路由规则说明</h2>
+<p>当前规则优先级为：</p>
+<ol class="article-list">
+<li class="list-depth-0"><code>SELECT ... FOR UPDATE</code> 路由到写组 <code>10</code></li>
+<li class="list-depth-0"><code>SELECT ... LOCK IN SHARE MODE</code> 路由到写组 <code>10</code></li>
+<li class="list-depth-0">普通 <code>SELECT</code> 路由到读组 <code>20</code></li>
+<li class="list-depth-0">其余全部语句路由到写组 <code>10</code></li>
+</ol>
+<p>这种规则适用于典型 OLTP 场景，但需要注意以下差异：</p>
+<ul class="article-list">
+<li class="list-depth-0">适合保守一致性策略的场景：将锁定读取明确送往主库，避免从库读取带来的语义偏差</li>
+<li class="list-depth-0">适合读流量分担的场景：普通查询尽量进入读组</li>
+<li class="list-depth-0">不适合所有 SQL 形态完全自动识别的场景：复杂事务、多语句、函数副作用语句仍需结合业务验证</li>
+</ul>
+<p>如果业务存在大量对一致性敏感的读取，应考虑减少读分离范围，或仅对白名单查询做读路由。</p>
+<h2 id="section-17">监控与高可用要点</h2>
+<h3 id="section-18">主从识别</h3>
+<p>通过如下配置自动识别：</p>
+<pre><code class="language-text">mysql_replication_hostgroups =
+(
+  { writer_hostgroup=10, reader_hostgroup=20, check_type=&quot;read_only&quot;, comment=&quot;mysql主从&quot; }
+)</code></pre>
+<p>这意味着：</p>
+<ul class="article-list">
+<li class="list-depth-0">主库应为 <code>read_only=0</code></li>
+<li class="list-depth-0">从库应为 <code>read_only=1</code></li>
+<li class="list-depth-0">ProxySQL 依据该状态维护读写分组关系</li>
+</ul>
+<h3 id="section-19">读组故障回落</h3>
+<pre><code class="language-text">monitor_writer_is_also_reader=true</code></pre>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要在从库故障时保持查询可用性</li>
+</ul>
+<p>代价：</p>
+<ul class="article-list">
+<li class="list-depth-0">主库可能承接额外读流量</li>
+<li class="list-depth-0">高峰时需要关注主库负载</li>
+</ul>
+<p>选择建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">可用性优先时保留该配置</li>
+<li class="list-depth-0">主库压力敏感时，应结合业务峰值审慎评估</li>
+</ul>
+<h3 id="section-20">副本部署建议</h3>
+<p><code>StatefulSet</code> 副本数为 <code>2</code>，并配置了反亲和性，适合基础高可用部署。生产环境建议进一步确认：</p>
+<ul class="article-list">
+<li class="list-depth-0">两个 Pod 是否确实分布在不同节点</li>
+<li class="list-depth-0">底层存储类是否满足 <code>ReadWriteOnce</code> 和性能要求</li>
+<li class="list-depth-0"><code>storageClassName</code> 与实际环境一致</li>
+</ul>
+<p>原始注释中同时提到 <code>nfs-storage</code> 与 Ceph 动态供应，实际部署时应二选一，并以真实可用的 StorageClass 为准。</p>
+<h2 id="section-21">常见问题与排查</h2>
+<h3 id="section-22">1. 业务连接命中了错误的命名空间域名</h3>
+<p>现象：</p>
+<ul class="article-list">
+<li class="list-depth-0">JDBC 或命令行连接域名无法解析</li>
+<li class="list-depth-0">Service 明明存在，但连接失败</li>
+</ul>
+<p>排查方式：</p>
+<ul class="article-list">
+<li class="list-depth-0">确认 ProxySQL 所在命名空间</li>
+<li class="list-depth-0">确认使用的是 <code>proxysql-headless.&lt;namespace&gt;.svc.cluster.local</code></li>
+<li class="list-depth-0">若示例中的 <code>db-proxy</code> 并非实际命名空间，应改为真实值</li>
+</ul>
+<h3 id="section-23">2. 普通查询落到了主库</h3>
+<p>可能原因：</p>
+<ul class="article-list">
+<li class="list-depth-0">读组节点不可用</li>
+<li class="list-depth-0">读组节点复制延迟过高或健康检查失败</li>
+<li class="list-depth-0">开启了 <code>monitor_writer_is_also_reader=true</code>，触发回落</li>
+</ul>
+<p>排查方式：</p>
+<ul class="article-list">
+<li class="list-depth-0">检查各从库 <code>read_only</code> 状态</li>
+<li class="list-depth-0">检查 ProxySQL 监控账号是否能正常探测后端</li>
+<li class="list-depth-0">检查从库连通性和复制状态</li>
+</ul>
+<h3 id="section-24">3. 锁定读没有进入写组</h3>
+<p>可能原因：</p>
+<ul class="article-list">
+<li class="list-depth-0">SQL 书写形式未命中当前正则</li>
+<li class="list-depth-0">语句前存在注释、换行或大小写差异</li>
+</ul>
+<p>处理建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">保持 SQL 风格稳定</li>
+<li class="list-depth-0">必要时扩展 <code>mysql_query_rules</code> 的匹配规则</li>
+<li class="list-depth-0">变更后重新验证 <code>SELECT ... FOR UPDATE</code> 路由结果</li>
+</ul>
+<h3 id="section-25">4. 管理端口可连通但业务端口不可用</h3>
+<p>排查方式：</p>
+<ul class="article-list">
+<li class="list-depth-0">检查 <code>6033</code> 的 Service 暴露是否正确</li>
+<li class="list-depth-0">检查就绪探针是否持续失败</li>
+<li class="list-depth-0">检查后端 MySQL 是否至少存在可用写组节点</li>
+</ul>
+<h2 id="section-26">安全与运维建议</h2>
+<ul class="article-list">
+<li class="list-depth-0">文中凭据均为占位符；生产环境应通过受控 Secret 或专用配置管理方式注入</li>
+<li class="list-depth-0"><code>root</code> 账号不建议作为业务流量接入账号，保留最小权限业务账号即可</li>
+<li class="list-depth-0"><code>admin</code> 管理端口应限制访问范围，避免暴露到不受控网络</li>
+<li class="list-depth-0">变更 <code>mysql_query_rules</code>、<code>mysql_servers</code> 或 <code>mysql_users</code> 后，应先灰度验证，再切换业务流量</li>
+</ul>
+<h2 id="section-27">推荐执行顺序</h2>
+<ol class="article-list">
+<li class="list-depth-0">准备命名空间、存储类和后端 MySQL 主从环境</li>
+<li class="list-depth-0">应用 <code>proxysql.yaml</code></li>
+<li class="list-depth-0">进入 Pod 连接 <code>6032</code> 管理端口检查配置加载</li>
+<li class="list-depth-0">通过集群内域名或临时 NodePort 执行读写验证</li>
+<li class="list-depth-0">确认规则生效后，再通过 <code>LoadBalancer</code> 提供正式接入地址</li>
+</ol>
+<h2 id="section-28">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://proxysql.com/documentation/getting-started/" target="_blank" rel="noreferrer">ProxySQL First Steps</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

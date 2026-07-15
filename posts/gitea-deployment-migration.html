@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="对比 Helm 与 Docker Compose 部署方式，覆盖 Gateway API 发布、迁移白名单、安全配置和常见故障排查。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Gitea 部署、发布与仓库迁移手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-4" />
+    <script src="/assets/js/main.js?v=20260715-batch-4" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">平台运维</p>
+        <h1>Gitea 部署、发布与仓库迁移手册</h1>
+        <p class="article-lead">对比 Helm 与 Docker Compose 部署方式，覆盖 Gateway API 发布、迁移白名单、安全配置和常见故障排查。</p>
+        <div class="article-info"><span>技术手册</span><span>约 8 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-platform" aria-hidden="true">
+        <div class="article-cover-inner"><span>平台运维</span><strong>GIT</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-3" href="#section-3">Kubernetes 场景</a>
+          <a class="toc-level-3" href="#section-4">Docker Compose 场景</a>
+          <a class="toc-level-2" href="#section-5">方案选择建议</a>
+          <a class="toc-level-3" href="#section-6">推荐方案</a>
+          <a class="toc-level-3" href="#section-7">适用场景区分</a>
+          <a class="toc-level-2" href="#section-10">Helm 部署 Gitea</a>
+          <a class="toc-level-3" href="#section-11">添加仓库</a>
+          <a class="toc-level-3" href="#section-12">海外环境安装</a>
+          <a class="toc-level-3" href="#section-13">大陆环境安装</a>
+          <a class="toc-level-3" href="#section-14">Gateway API 暴露服务</a>
+          <a class="toc-level-3" href="#section-15">安装后检查</a>
+          <a class="toc-level-2" href="#section-16">Docker Compose 部署 Gitea</a>
+          <a class="toc-level-2" href="#section-17">迁移来源白名单配置</a>
+          <a class="toc-level-3" href="#section-18">配置位置</a>
+          <a class="toc-level-3" href="#section-19">域名白名单示例</a>
+          <a class="toc-level-3" href="#section-20">内网地址白名单示例</a>
+          <a class="toc-level-3" href="#section-21">选择建议</a>
+          <a class="toc-level-2" href="#section-22">推荐配置与注意事项</a>
+          <a class="toc-level-3" href="#section-23">推荐保留项</a>
+          <a class="toc-level-3" href="#section-24">安全建议</a>
+          <a class="toc-level-2" href="#section-25">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-26">无法迁移仓库</a>
+          <a class="toc-level-3" href="#section-27">服务已启动但页面无法访问</a>
+          <a class="toc-level-3" href="#section-28">时间不一致导致日志或提交时间异常</a>
+          <a class="toc-level-2" href="#section-29">参考</a>
+          <a class="toc-level-2" href="#section-30">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>安全提示：本文已移除真实域名、邮箱、管理员账号和密码。不要通过 Helm 命令行长期传递真实密码，因为它可能进入 shell 历史、进程参数和 Release 记录；生产环境应使用受控 Secret 或外部密钥系统，并在升级前备份数据库、仓库数据和 values。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于在两类常见环境中部署 Gitea，并完成仓库迁移相关配置：</p>
+<ul class="article-list">
+<li class="list-depth-0">Kubernetes 集群中通过 Helm 安装高可用 Gitea</li>
+<li class="list-depth-0">单机或轻量环境中通过 Docker Compose 运行 Gitea</li>
+</ul>
+<p>同时给出 <code>migrations</code> 相关配置，用于控制可迁移来源地址，并提供暴露服务、验收检查与安全建议。</p>
+<h2 id="section-2">环境说明</h2>
+<h3 id="section-3">Kubernetes 场景</h3>
+<ul class="article-list">
+<li class="list-depth-0">已安装并配置 <code>kubectl</code></li>
+<li class="list-depth-0">已安装 Helm 3</li>
+<li class="list-depth-0">可用存储类：<code>rook-ceph-block-ssd</code></li>
+<li class="list-depth-0">已存在 Gateway：<code>nginx-gateway/shared-gateway</code></li>
+<li class="list-depth-0">对外访问域名示例：<code>gitea.example.com</code></li>
+<li class="list-depth-0">Helm Chart 版本：<code>12.5.0</code></li>
+</ul>
+<h3 id="section-4">Docker Compose 场景</h3>
+<ul class="article-list">
+<li class="list-depth-0">已安装 Docker 与 Docker Compose</li>
+<li class="list-depth-0">Gitea 镜像：<code>registry.example.com/platform/gitea:1.25.4</code></li>
+<li class="list-depth-0">宿主机本地目录用于持久化：<code>./gitea</code></li>
+</ul>
+<h2 id="section-5">方案选择建议</h2>
+<h3 id="section-6">推荐方案</h3>
+<p>生产环境优先使用 Kubernetes + Helm 方案，原因如下：</p>
+<ul class="article-list">
+<li class="list-depth-0">内置持久化配置，适合长期运行</li>
+<li class="list-depth-0">可直接启用 <code>postgresql-ha</code> 与 <code>valkey-cluster</code></li>
+<li class="list-depth-0">更适合通过 Gateway API 接入集群统一流量入口</li>
+</ul>
+<h3 id="section-7">适用场景区分</h3>
+<h4 id="section-8">Kubernetes + Helm</h4>
+<p>适用于以下场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要高可用数据库与缓存</li>
+<li class="list-depth-0">已运行 Kubernetes 集群</li>
+<li class="list-depth-0">需要通过统一网关对外暴露服务</li>
+<li class="list-depth-0">需要规范化、可重复的运维交付</li>
+</ul>
+<h4 id="section-9">Docker Compose</h4>
+<p>适用于以下场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">开发测试</li>
+<li class="list-depth-0">单机验证</li>
+<li class="list-depth-0">小规模内部使用</li>
+<li class="list-depth-0">尚未接入 Kubernetes 的临时部署</li>
+</ul>
+<h2 id="section-10">Helm 部署 Gitea</h2>
+<h3 id="section-11">添加仓库</h3>
+<pre><code class="language-bash">helm repo add gitea https://dl.gitea.com/charts/
+helm repo update</code></pre>
+<h3 id="section-12">海外环境安装</h3>
+<p>适用于可直接访问公网镜像仓库的环境。</p>
+<pre><code class="language-bash">helm upgrade --install gitea gitea/gitea -n gitea --create-namespace \
+  --version 12.5.0 \
+  --set global.storageClass=rook-ceph-block-ssd \
+  --set persistence.enabled=true \
+  --set persistence.size=200Gi \
+  --set gitea.config.migrations.ALLOW_LOCALNETWORKS=true \
+  --set-string gitea.config.migrations.ALLOWED_DOMAINS=&quot;gitea.example.com\,source-a.example.com\,source-b.example.com&quot; \
+  --set-string gitea.config.migrations.BLOCKED_DOMAINS=&quot;&quot; \
+  --set-string gitea.config.server.ROOT_URL=&quot;https://gitea.example.com/&quot; \
+  --set-string gitea.config.server.DOMAIN=&quot;gitea.example.com&quot; \
+  --set-string gitea.config.server.PROTOCOL=&quot;http&quot; \
+  --set gitea.admin.username=&#39;&lt;GITEA_ADMIN_USER&gt;&#39; \
+  --set gitea.admin.email=&#39;&lt;GITEA_ADMIN_EMAIL&gt;&#39; \
+  --set gitea.admin.password=&#39;&lt;GITEA_ADMIN_PASSWORD&gt;&#39; \
+  --set postgresql-ha.enabled=true \
+  --set postgresql-ha.postgresql.replicaCount=3 \
+  --set postgresql-ha.persistence.size=100Gi \
+  --set valkey-cluster.enabled=true \
+  --set valkey-cluster.cluster.nodes=3 \
+  --set valkey-cluster.persistence.enabled=true \
+  --set valkey-cluster.persistence.size=20Gi</code></pre>
+<h3 id="section-13">大陆环境安装</h3>
+<p>适用于镜像需通过内网仓库分发的环境。</p>
+<p>与海外环境相比，主要差异如下：</p>
+<ul class="article-list">
+<li class="list-depth-0">增加 <code>global.imageRegistry=registry.example.com/platform</code></li>
+<li class="list-depth-0">增加 <code>global.security.allowInsecureImages=true</code></li>
+</ul>
+<pre><code class="language-bash">helm upgrade --install gitea gitea/gitea -n gitea --create-namespace \
+  --version 12.5.0 \
+  --set global.storageClass=rook-ceph-block-ssd \
+  --set global.imageRegistry=registry.example.com/platform \
+  --set global.security.allowInsecureImages=true \
+  --set persistence.enabled=true \
+  --set persistence.size=200Gi \
+  --set gitea.config.migrations.ALLOW_LOCALNETWORKS=true \
+  --set-string gitea.config.migrations.ALLOWED_DOMAINS=&quot;gitea.example.com\,source-a.example.com\,source-b.example.com&quot; \
+  --set-string gitea.config.migrations.BLOCKED_DOMAINS=&quot;&quot; \
+  --set-string gitea.config.server.ROOT_URL=&quot;https://gitea.example.com/&quot; \
+  --set-string gitea.config.server.DOMAIN=&quot;gitea.example.com&quot; \
+  --set-string gitea.config.server.PROTOCOL=&quot;http&quot; \
+  --set gitea.admin.username=&#39;&lt;GITEA_ADMIN_USER&gt;&#39; \
+  --set gitea.admin.email=&#39;&lt;GITEA_ADMIN_EMAIL&gt;&#39; \
+  --set gitea.admin.password=&#39;&lt;GITEA_ADMIN_PASSWORD&gt;&#39; \
+  --set postgresql-ha.enabled=true \
+  --set postgresql-ha.postgresql.replicaCount=3 \
+  --set postgresql-ha.persistence.size=100Gi \
+  --set valkey-cluster.enabled=true \
+  --set valkey-cluster.cluster.nodes=3 \
+  --set valkey-cluster.persistence.enabled=true \
+  --set valkey-cluster.persistence.size=20Gi</code></pre>
+<h3 id="section-14">Gateway API 暴露服务</h3>
+<pre><code class="language-bash">cat &lt;&lt;&#39;EOF&#39; | kubectl apply -f -
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: gitea
+  namespace: gitea
+spec:
+  parentRefs:
+  - name: shared-gateway
+    namespace: nginx-gateway
+  hostnames:
+  - gitea.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: gitea-http
+      port: 3000
+EOF</code></pre>
+<h3 id="section-15">安装后检查</h3>
+<pre><code class="language-bash">kubectl -n gitea get pods
+kubectl -n gitea get svc
+kubectl -n gitea get httproute</code></pre>
+<p>访问地址示例：</p>
+<pre><code class="language-text">https://gitea.example.com/</code></pre>
+<h2 id="section-16">Docker Compose 部署 Gitea</h2>
+<p>以下配置适合单机快速启动：</p>
+<pre><code class="language-yaml">version: &quot;3&quot;
+
+networks:
+  gitea:
+    external: false
+
+services:
+  server:
+    image: registry.example.com/platform/gitea:1.25.4
+    container_name: gitea
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+    restart: always
+    networks:
+      - gitea
+    volumes:
+      - ./gitea:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - &quot;3000:3000&quot;</code></pre>
+<p>启动方式：</p>
+<pre><code class="language-bash">docker-compose up -d</code></pre>
+<p>重启方式：</p>
+<pre><code class="language-bash">docker-compose restart</code></pre>
+<h2 id="section-17">迁移来源白名单配置</h2>
+<p>Gitea 在执行仓库迁移时，可通过 <code>migrations</code> 段限制允许来源。该配置对以下场景有用：</p>
+<ul class="article-list">
+<li class="list-depth-0">从指定域名迁移仓库</li>
+<li class="list-depth-0">从内网地址迁移仓库</li>
+<li class="list-depth-0">允许本地网络地址参与迁移</li>
+</ul>
+<h3 id="section-18">配置位置</h3>
+<p>Docker Compose 部署通常修改：</p>
+<pre><code class="language-bash">vim /docker/gitea/gitea/gitea/conf/app.ini</code></pre>
+<p>Kubernetes Helm 部署则可通过 <code>--set gitea.config.migrations.*</code> 下发。</p>
+<h3 id="section-19">域名白名单示例</h3>
+<p>适用于迁移来源为固定域名的情况。</p>
+<pre><code class="language-ini">[migrations]
+ALLOWED_DOMAINS = source.example.com
+ALLOW_LOCALNETWORKS = true
+BLOCKED_DOMAINS =</code></pre>
+<h3 id="section-20">内网地址白名单示例</h3>
+<p>适用于迁移来源为固定内网 IP 的情况。</p>
+<pre><code class="language-ini">[migrations]
+ALLOWED_DOMAINS = &lt;MIGRATION_SOURCE_IP&gt;
+ALLOW_LOCALNETWORKS = true
+BLOCKED_DOMAINS =</code></pre>
+<h3 id="section-21">选择建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">来源为标准域名时，优先填写域名，便于后续地址迁移与证书管理</li>
+<li class="list-depth-0">来源为临时内网服务时，可直接填写 IP</li>
+<li class="list-depth-0">需要同时支持多个来源时，按逗号分隔多个域名或地址</li>
+<li class="list-depth-0"><code>ALLOW_LOCALNETWORKS=true</code> 仅在确有内网迁移需求时开启</li>
+</ul>
+<h2 id="section-22">推荐配置与注意事项</h2>
+<h3 id="section-23">推荐保留项</h3>
+<ul class="article-list">
+<li class="list-depth-0">生产环境保留持久化：<code>persistence.enabled=true</code></li>
+<li class="list-depth-0">集群场景优先使用 <code>postgresql-ha</code> 与 <code>valkey-cluster</code></li>
+<li class="list-depth-0">对外访问时明确设置 <code>ROOT_URL</code> 与 <code>DOMAIN</code></li>
+<li class="list-depth-0">统一通过网关暴露，而不是直接依赖 NodePort</li>
+</ul>
+<h3 id="section-24">安全建议</h3>
+<ul class="article-list">
+<li class="list-depth-0">不要在生产环境长期使用命令行明文密码，建议改为 Secret 或密文注入</li>
+<li class="list-depth-0"><code>global.security.allowInsecureImages=true</code> 仅在内网镜像仓库确有需要时启用</li>
+<li class="list-depth-0"><code>ALLOWED_DOMAINS</code> 应尽量精确，不要无约束放开</li>
+<li class="list-depth-0">修改 <code>app.ini</code> 后应重启服务使配置生效</li>
+</ul>
+<h2 id="section-25">常见问题与排查</h2>
+<h3 id="section-26">无法迁移仓库</h3>
+<p>优先检查以下项目：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>ALLOWED_DOMAINS</code> 是否包含来源域名或 IP</li>
+<li class="list-depth-0"><code>ALLOW_LOCALNETWORKS</code> 是否满足内网迁移场景</li>
+<li class="list-depth-0"><code>BLOCKED_DOMAINS</code> 是否误拦截</li>
+<li class="list-depth-0"><code>ROOT_URL</code> 与实际访问地址是否一致</li>
+</ul>
+<h3 id="section-27">服务已启动但页面无法访问</h3>
+<p>Kubernetes 场景检查：</p>
+<pre><code class="language-bash">kubectl -n gitea get pods
+kubectl -n gitea get svc
+kubectl -n gitea get httproute</code></pre>
+<p>Docker Compose 场景检查：</p>
+<pre><code class="language-bash">docker-compose ps
+docker-compose logs -f</code></pre>
+<h3 id="section-28">时间不一致导致日志或提交时间异常</h3>
+<p>Docker Compose 场景建议保留以下挂载：</p>
+<pre><code class="language-yaml">- /etc/timezone:/etc/timezone:ro
+- /etc/localtime:/etc/localtime:ro</code></pre>
+<h2 id="section-29">参考</h2>
+<p>Gitea 官方文档：</p>
+<pre><code class="language-text">https://docs.gitea.com/</code></pre>
+<h2 id="section-30">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://docs.gitea.com/installation/install-on-kubernetes" target="_blank" rel="noreferrer">Gitea Kubernetes 安装文档</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

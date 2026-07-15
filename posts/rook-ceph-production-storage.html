@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="覆盖 Rook-Ceph 部署、SSD/HDD 分层池、Gateway、对象存储、容量规划及 OSD 安全更换流程。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Rook-Ceph 生产部署与分层存储运维手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-4" />
+    <script src="/assets/js/main.js?v=20260715-batch-4" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Kubernetes</p>
+        <h1>Rook-Ceph 生产部署与分层存储运维手册</h1>
+        <p class="article-lead">覆盖 Rook-Ceph 部署、SSD/HDD 分层池、Gateway、对象存储、容量规划及 OSD 安全更换流程。</p>
+        <div class="article-info"><span>技术手册</span><span>约 22 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-kubernetes" aria-hidden="true">
+        <div class="article-cover-inner"><span>KUBERNETES</span><strong>CEPH</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境规划与设计建议</a>
+          <a class="toc-level-3" href="#section-3">基础要求</a>
+          <a class="toc-level-3" href="#section-4">故障域与副本建议</a>
+          <a class="toc-level-3" href="#section-5">磁盘路径选择建议</a>
+          <a class="toc-level-2" href="#section-6">安装 Rook-Ceph</a>
+          <a class="toc-level-3" href="#section-7">获取部署文件</a>
+          <a class="toc-level-3" href="#section-8">镜像拉取受限场景</a>
+          <a class="toc-level-3" href="#section-9">安装顺序</a>
+          <a class="toc-level-2" href="#section-10">创建 Ceph 集群</a>
+          <a class="toc-level-3" href="#section-11">推荐原则</a>
+          <a class="toc-level-3" href="#section-12">通用三节点示例</a>
+          <a class="toc-level-3" href="#section-13">VMware 生产示例</a>
+          <a class="toc-level-2" href="#section-14">集群健康检查</a>
+          <a class="toc-level-2" href="#section-15">存储池与 StorageClass 设计</a>
+          <a class="toc-level-3" href="#section-16">方案一：单一副本池</a>
+          <a class="toc-level-3" href="#section-17">方案二：SSD/HDD 分层池</a>
+          <a class="toc-level-3" href="#section-18">Bucket 与 PVC 的区别</a>
+          <a class="toc-level-2" href="#section-19">PG autoscaler 与容量规划</a>
+          <a class="toc-level-3" href="#section-20">PG autoscaler</a>
+          <a class="toc-level-3" href="#section-21">MySQL 等数据库容量评估</a>
+          <a class="toc-level-3" href="#section-22">性能与监控重点</a>
+          <a class="toc-level-2" href="#section-23">Dashboard 暴露方案</a>
+          <a class="toc-level-3" href="#section-24">方案一：Gateway 终止 TLS</a>
+          <a class="toc-level-3" href="#section-25">方案二：TLS 透传</a>
+          <a class="toc-level-3" href="#section-26">方案三：NodePort 临时访问</a>
+          <a class="toc-level-2" href="#section-27">启用对象存储</a>
+          <a class="toc-level-3" href="#section-28">创建 CephObjectStore</a>
+          <a class="toc-level-3" href="#section-29">创建对象用户</a>
+          <a class="toc-level-3" href="#section-30">通过 Gateway 暴露 RGW</a>
+          <a class="toc-level-3" href="#section-31">客户端访问方式</a>
+          <a class="toc-level-2" href="#section-32">OSD 新增、替换与下线</a>
+          <a class="toc-level-3" href="#section-33">操作前检查</a>
+          <a class="toc-level-3" href="#section-34">新增 OSD 节点</a>
+          <a class="toc-level-3" href="#section-35">OSD 安全下线与删除</a>
+          <a class="toc-level-3" href="#section-36">同节点换盘</a>
+          <a class="toc-level-3" href="#section-37">整节点替换</a>
+          <a class="toc-level-2" href="#section-38">恢复回填节流</a>
+          <a class="toc-level-2" href="#section-39">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-40">OSD 没有创建</a>
+          <a class="toc-level-3" href="#section-41">safe-to-destroy 报错</a>
+          <a class="toc-level-3" href="#section-42">Namespace 卡在 Terminating</a>
+          <a class="toc-level-3" href="#section-43">Dashboard 或 RGW 通过 Gateway 访问异常</a>
+          <a class="toc-level-2" href="#section-44">生产建议</a>
+          <a class="toc-level-2" href="#section-45">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>极高风险提示：Ceph 副本数、故障域、PG、OSD 下线和集群清理必须结合实时容量与健康状态评估。优先使用 Rook 官方 OSD purge Job；一次只处理一个 OSD并等待回填完成。删除 CephCluster、强制移除 finalizer 或清理设备会永久丢失数据，本文不提供可直接复制的强制清集群命令。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>本文用于在自建 Kubernetes 环境中部署和运维 Rook-Ceph，覆盖以下典型需求：</p>
+<ul class="article-list">
+<li class="list-depth-0">构建可为 Kubernetes 提供动态存储的 Ceph 集群</li>
+<li class="list-depth-0">提供 RBD 块存储、对象存储和 Dashboard 管理入口</li>
+<li class="list-depth-0">支持单池部署与 SSD/HDD 分层存储</li>
+<li class="list-depth-0">支持节点扩容、磁盘替换、OSD 下线与故障排查</li>
+<li class="list-depth-0">在 VMware 等虚拟化环境中降低盘符漂移带来的运维风险</li>
+</ul>
+<p>本文优先采用可直接落地的生产做法；对于不同规模和不同介质规划，分别给出适用场景与选择建议。</p>
+<h2 id="section-2">环境规划与设计建议</h2>
+<h3 id="section-3">基础要求</h3>
+<ul class="article-list">
+<li class="list-depth-0">至少 3 个节点承载 MON，才能形成稳定 quorum。</li>
+<li class="list-depth-0">数据库类业务建议使用 SSD 或 NVMe，网络建议低延迟且至少万兆。</li>
+<li class="list-depth-0">数据盘必须与系统盘严格分离，部署前务必在每个节点确认：</li>
+</ul>
+<pre><code class="language-bash">lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT</code></pre>
+<h3 id="section-4">故障域与副本建议</h3>
+<p>对于常见的 3 节点存储集群，推荐：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>failureDomain: host</code></li>
+<li class="list-depth-0"><code>size: 3</code></li>
+<li class="list-depth-0"><code>min_size: 2</code></li>
+</ul>
+<p>原因：</p>
+<ul class="article-list">
+<li class="list-depth-0">副本按主机维度打散，单节点故障时仍可读写。</li>
+<li class="list-depth-0">若使用 <code>failureDomain=osd</code>，当单机存在多个 OSD 时，多个副本可能落在同一主机，抗故障能力变差。</li>
+</ul>
+<p>注意：</p>
+<ul class="article-list">
+<li class="list-depth-0">当集群只有 3 个 host 且池副本数为 3 时，掉 1 个 host 后通常还能读写，但会长期处于 <code>degraded/undersized</code>，因为没有第 4 个 host 承载缺失副本。</li>
+<li class="list-depth-0">生产建议最终扩展到至少 4 个存储节点，以便故障后可以自动补齐副本。</li>
+</ul>
+<h3 id="section-5">磁盘路径选择建议</h3>
+<p>物理机盘符稳定时，可显式指定 <code>sdb</code>、<code>sdc</code> 等设备名；在 VMware 等虚拟化环境中，更推荐使用 <code>/dev/disk/by-path</code>，避免重启或控制器顺序变化导致 <code>/dev/sdX</code> 漂移。</p>
+<p>查看稳定路径：</p>
+<pre><code class="language-bash">ls -l /dev/disk/by-path | grep -E -- &#39;-&gt; ../../sd[b|c]$&#39;</code></pre>
+<h2 id="section-6">安装 Rook-Ceph</h2>
+<h3 id="section-7">获取部署文件</h3>
+<pre><code class="language-bash">git clone --single-branch --branch v1.18.8 https://github.com/rook/rook.git
+cd rook/deploy/examples</code></pre>
+<h3 id="section-8">镜像拉取受限场景</h3>
+<p>如无法访问默认镜像仓库，可在 <code>operator.yaml</code> 中替换 CSI 镜像；以下两组镜像均可作为参考：</p>
+<p>华为云镜像：</p>
+<pre><code class="language-yaml">ROOK_CSI_REGISTRAR_IMAGE: &quot;registry.example.com/storage/csi-node-driver-registrar:v2.13.0&quot;
+ROOK_CSI_RESIZER_IMAGE: &quot;registry.example.com/storage/csi-resizer:v1.13.2&quot;
+ROOK_CSI_PROVISIONER_IMAGE: &quot;registry.example.com/storage/csi-provisioner:v5.2.0&quot;
+ROOK_CSI_SNAPSHOTTER_IMAGE: &quot;registry.example.com/storage/csi-snapshotter:v8.2.1&quot;
+ROOK_CSI_ATTACHER_IMAGE: &quot;registry.example.com/storage/csi-attacher:v4.8.1&quot;
+image: registry.example.com/storage/ceph:v1.18.8</code></pre>
+<p>私有仓库镜像：</p>
+<pre><code class="language-yaml">ROOK_CSI_REGISTRAR_IMAGE: &quot;registry.example.com/storage/sig-storage/csi-node-driver-registrar:v2.13.0&quot;
+ROOK_CSI_RESIZER_IMAGE: &quot;registry.example.com/storage/sig-storage/csi-resizer:v1.13.2&quot;
+ROOK_CSI_PROVISIONER_IMAGE: &quot;registry.example.com/storage/sig-storage/csi-provisioner:v5.2.0&quot;
+ROOK_CSI_SNAPSHOTTER_IMAGE: &quot;registry.example.com/storage/sig-storage/csi-snapshotter:v8.2.1&quot;
+ROOK_CSI_ATTACHER_IMAGE: &quot;registry.example.com/storage/sig-storage/csi-attacher:v4.8.1&quot;</code></pre>
+<p>如需 toolbox，可同步调整 <code>toolbox.yaml</code> 镜像：</p>
+<pre><code class="language-yaml">image: registry.example.com/storage/ceph:v19</code></pre>
+<h3 id="section-9">安装顺序</h3>
+<pre><code class="language-bash">kubectl apply -f crds.yaml
+kubectl apply -f common.yaml
+kubectl apply -f csi-operator.yaml
+kubectl apply -f operator.yaml
+kubectl apply -f toolbox.yaml</code></pre>
+<p>检查组件状态：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph get pod</code></pre>
+<h2 id="section-10">创建 Ceph 集群</h2>
+<h3 id="section-11">推荐原则</h3>
+<ul class="article-list">
+<li class="list-depth-0">不要使用 <code>useAllDevices: true</code>，避免误用系统盘。</li>
+<li class="list-depth-0">明确指定节点和数据盘。</li>
+<li class="list-depth-0">VMware 等环境优先使用 <code>by-path</code>。</li>
+<li class="list-depth-0">存在节点磁盘差异时，只填写真实存在的盘，避免 <code>osd-prepare</code> 反复失败。</li>
+</ul>
+<h3 id="section-12">通用三节点示例</h3>
+<p>适用于各节点均有一块独立数据盘的场景：</p>
+<pre><code class="language-yaml">apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v19.2.3
+  dataDirHostPath: /var/lib/rook
+  dashboard:
+    enabled: true
+    ssl: false
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+    - name: storage-node-01
+      devices:
+      - name: sdb
+    - name: storage-node-02
+      devices:
+      - name: sdb
+    - name: storage-node-03
+      devices:
+      - name: sdb</code></pre>
+<h3 id="section-13">VMware 生产示例</h3>
+<p>适用于节点较多、磁盘需要按稳定路径绑定的场景：</p>
+<pre><code class="language-yaml">apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  cephVersion:
+    image: registry.example.com/storage/ceph:v19.2.3
+    allowUnsupported: false
+  dataDirHostPath: /var/lib/rook
+  mon:
+    count: 5
+    allowMultiplePerNode: false
+  mgr:
+    count: 2
+    allowMultiplePerNode: false
+  dashboard:
+    enabled: true
+    ssl: false
+  monitoring:
+    enabled: true
+    metricsDisabled: false
+    exporter:
+      perfCountersPrioLimit: 5
+      statsPeriodSeconds: 5
+  removeOSDsIfOutAndSafeToRemove: false
+  priorityClassNames:
+    mon: system-node-critical
+    osd: system-node-critical
+    mgr: system-cluster-critical
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+    - name: macau-01
+      devices:
+      - name: /dev/disk/by-path/pci-0000:02:00.0-scsi-0:0:1:0
+    - name: macau-02
+      devices:
+      - name: /dev/disk/by-path/pci-0000:02:00.0-scsi-0:0:1:0
+    - name: macau-03
+      devices:
+      - name: /dev/disk/by-path/pci-0000:02:00.0-scsi-0:0:1:0
+      - name: /dev/disk/by-path/pci-0000:02:00.0-scsi-0:0:2:0</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>macau-01</code>、<code>macau-02</code> 只有 SSD 时，只写对应 SSD，不要填写不存在的 HDD。</li>
+<li class="list-depth-0"><code>mon.count: 5</code> 适用于节点充足且追求更高仲裁稳定性的场景；小规模集群通常保留 3 个 MON 即可。</li>
+</ul>
+<p>应用后观察：</p>
+<pre><code class="language-bash">kubectl apply -f cluster-prod.yaml
+kubectl -n rook-ceph get pod -w</code></pre>
+<h2 id="section-14">集群健康检查</h2>
+<p>安装 toolbox 后，常用检查命令如下：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph pg stat
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd tree
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd df tree
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph df</code></pre>
+<p>理想状态：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>HEALTH_OK</code></li>
+<li class="list-depth-0"><code>mon</code> 达到预期 quorum</li>
+<li class="list-depth-0"><code>mgr</code> 正常 active/standby</li>
+<li class="list-depth-0"><code>osd: N up, N in</code></li>
+<li class="list-depth-0"><code>pgs: active+clean</code></li>
+</ul>
+<h2 id="section-15">存储池与 StorageClass 设计</h2>
+<h3 id="section-16">方案一：单一副本池</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">集群规模较小</li>
+<li class="list-depth-0">所有数据盘介质相近</li>
+<li class="list-depth-0">业务以单一类型为主</li>
+</ul>
+<p>推荐块存储池：</p>
+<pre><code class="language-yaml">apiVersion: ceph.rook.io/v1
+kind: CephBlockPool
+metadata:
+  name: replicapool
+  namespace: rook-ceph
+spec:
+  failureDomain: host
+  replicated:
+    size: 3</code></pre>
+<p>对应 RBD StorageClass：</p>
+<pre><code class="language-yaml">apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rook-ceph-block
+  annotations:
+    storageclass.kubernetes.io/is-default-class: &quot;true&quot;
+provisioner: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: replicapool
+  imageFormat: &quot;2&quot;
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate</code></pre>
+<p>PVC 验证：</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-rbd
+spec:
+  accessModes: [&quot;ReadWriteOnce&quot;]
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 5Gi</code></pre>
+<h3 id="section-17">方案二：SSD/HDD 分层池</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">业务冷热分层明显</li>
+<li class="list-depth-0">节点同时具备 SSD 与 HDD</li>
+<li class="list-depth-0">需要将数据库和归档类数据分开</li>
+</ul>
+<p>创建 CRUSH rule：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- \
+  ceph osd crush rule create-replicated replicated_ssd default host ssd
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- \
+  ceph osd crush rule create-replicated replicated_hdd default host hdd
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- \
+  ceph osd crush rule ls | egrep &#39;replicated_(ssd|hdd)&#39;</code></pre>
+<p>创建池：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool create rbd-ssd 64
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set rbd-ssd size 3
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set rbd-ssd min_size 2
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set rbd-ssd crush_rule replicated_ssd
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool application enable rbd-ssd rbd
+
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool create rbd-hdd 64
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set rbd-hdd size 2
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set rbd-hdd min_size 1
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set rbd-hdd crush_rule replicated_hdd
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool application enable rbd-hdd rbd</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">SSD 池建议用于 MySQL 等低延迟业务。</li>
+<li class="list-depth-0">HDD 池可用于容量型或冷数据业务。</li>
+<li class="list-depth-0">当 HDD 分布的 host 数量较少时，<code>size</code> 必须与实际 host 数量匹配；样例中 HDD 池使用 <code>size=2/min_size=1</code>，适用于容量池容错要求较低或 host 覆盖范围不足的场景。</li>
+<li class="list-depth-0">若 HDD 节点数量同样充足且希望达到生产级副本保护，优先将 HDD 池也设置为 <code>size=3/min_size=2</code>。</li>
+</ul>
+<p>对应 StorageClass：</p>
+<p>SSD：</p>
+<pre><code class="language-yaml">apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rook-ceph-block-ssd
+provisioner: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: rbd-ssd
+  imageFormat: &quot;2&quot;
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate</code></pre>
+<p>HDD：</p>
+<pre><code class="language-yaml">apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rook-ceph-block-hdd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: &quot;true&quot;
+provisioner: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: rbd-hdd
+  imageFormat: &quot;2&quot;
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate</code></pre>
+<h3 id="section-18">Bucket 与 PVC 的区别</h3>
+<p><code>rook-ceph.ceph.rook.io/bucket</code> 是对象存储桶 provisioner，用于 OBC，不可直接给 PVC 使用。若 PVC 一直 <code>Pending</code>，先确认选择的是 RBD 或 CephFS 类型的 StorageClass，而不是 Bucket 类型。</p>
+<h2 id="section-19">PG autoscaler 与容量规划</h2>
+<h3 id="section-20">PG autoscaler</h3>
+<p>建议保持开启：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph mgr module enable pg_autoscaler
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool set replicapool pg_autoscale_mode on
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd pool autoscale-status</code></pre>
+<p>对于多池场景，可补充预期容量信息：</p>
+<pre><code class="language-bash">ceph osd pool set &lt;pool&gt; target_size_ratio 0.70
+ceph osd pool set &lt;pool&gt; target_size_bytes 1000000000000</code></pre>
+<h3 id="section-21">MySQL 等数据库容量评估</h3>
+<p>若使用 3 副本池承载 500Gi MySQL 数据：</p>
+<ul class="article-list">
+<li class="list-depth-0">逻辑数据约 500Gi</li>
+<li class="list-depth-0">原始容量至少约 <code>500Gi x 3 = 1500Gi</code></li>
+<li class="list-depth-0">实际还需预留恢复空间、BlueStore 元数据和 nearfull/full 阈值余量</li>
+</ul>
+<p>因此：</p>
+<ul class="article-list">
+<li class="list-depth-0">原始可用容量应显著高于 1.5Ti</li>
+<li class="list-depth-0">业务高峰和故障恢复期间要避免接近 <code>nearfull</code></li>
+</ul>
+<h3 id="section-22">性能与监控重点</h3>
+<p>业务侧重点：</p>
+<ul class="article-list">
+<li class="list-depth-0">commit 延迟</li>
+<li class="list-depth-0">p95/p99 延迟</li>
+<li class="list-depth-0">fsync 相关等待</li>
+</ul>
+<p>MySQL 节点快速观测：</p>
+<pre><code class="language-bash">iostat -x 1</code></pre>
+<p>Ceph 侧重点：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph pg stat</code></pre>
+<p>节点网络与介质检查：</p>
+<pre><code class="language-bash">ip -s link
+ping -i 0.2 &lt;other-node-ip&gt;
+lsblk -o NAME,ROTA,TYPE,SIZE,MODEL</code></pre>
+<h2 id="section-23">Dashboard 暴露方案</h2>
+<h3 id="section-24">方案一：Gateway 终止 TLS</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要正式域名和可信证书</li>
+<li class="list-depth-0">希望统一接入层处理 TLS、访问控制和审计</li>
+</ul>
+<p>先关闭 Dashboard 内置 SSL：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph patch cephcluster rook-ceph --type merge -p &#39;{&quot;spec&quot;:{&quot;dashboard&quot;:{&quot;ssl&quot;:false,&quot;port&quot;:8443}}}&#39;</code></pre>
+<p>创建证书 Secret：</p>
+<pre><code class="language-bash">kubectl -n gateway-system create secret tls demo-cert \
+  --cert=/path/to/tls.crt \
+  --key=/path/to/tls.key</code></pre>
+<p>创建 Gateway：</p>
+<pre><code class="language-yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tls-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: cilium
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    hostname: &quot;ceph.example.com&quot;
+    allowedRoutes:
+      namespaces:
+        from: All
+    tls:
+      certificateRefs:
+      - kind: Secret
+        name: demo-cert</code></pre>
+<p>如需 BGP 宣告：</p>
+<pre><code class="language-bash">kubectl -n gateway-system label svc cilium-gateway-tls-gateway lb-pool=vip bgp=blue --overwrite</code></pre>
+<p>创建 HTTPRoute：</p>
+<pre><code class="language-yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ceph
+  namespace: rook-ceph
+spec:
+  parentRefs:
+  - name: tls-gateway
+    namespace: gateway-system
+    sectionName: https
+  hostnames:
+  - ceph.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: rook-ceph-mgr-dashboard
+      port: 8443</code></pre>
+<h3 id="section-25">方案二：TLS 透传</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要尽快暴露 Dashboard</li>
+<li class="list-depth-0">可以接受自签名证书告警</li>
+<li class="list-depth-0">Gateway 实现已支持 <code>TLSRoute</code></li>
+</ul>
+<pre><code class="language-yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: ceph-dashboard-tls
+  namespace: rook-ceph
+spec:
+  parentRefs:
+  - name: &lt;GATEWAY_NAME&gt;
+    namespace: &lt;GATEWAY_NS&gt;
+  hostnames:
+  - ceph.example.com
+  rules:
+  - backendRefs:
+    - name: rook-ceph-mgr-dashboard
+      port: 8443</code></pre>
+<h3 id="section-26">方案三：NodePort 临时访问</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">内网快速验证</li>
+<li class="list-depth-0">无 Gateway API 或临时排障</li>
+</ul>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: rook-ceph-mgr-dashboard-nodeport
+  namespace: rook-ceph
+spec:
+  type: NodePort
+  selector:
+    app: rook-ceph-mgr
+    rook_cluster: rook-ceph
+  ports:
+  - name: http-dashboard
+    port: 7000
+    targetPort: 7000
+    nodePort: 30700</code></pre>
+<p>登录信息：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph get secret rook-ceph-dashboard-password \
+  -o jsonpath=&quot;{[&#39;data&#39;][&#39;password&#39;]}&quot; | base64 --decode &amp;&amp; echo</code></pre>
+<p>默认用户名为 <code>admin</code>。</p>
+<h2 id="section-27">启用对象存储</h2>
+<h3 id="section-28">创建 CephObjectStore</h3>
+<pre><code class="language-yaml">apiVersion: ceph.rook.io/v1
+kind: CephObjectStore
+metadata:
+  name: store-a
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 3
+  dataPool:
+    replicated:
+      size: 3
+  preservePoolsOnDelete: true
+  gateway:
+    port: 80
+    instances: 3</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">对象池副本数应与实际可用存储 host 数匹配。</li>
+<li class="list-depth-0">如果集群阶段性只剩 2 个 OSD，继续保持 <code>size: 3</code> 会导致对象池长期 <code>undersized</code>。</li>
+</ul>
+<h3 id="section-29">创建对象用户</h3>
+<pre><code class="language-yaml">apiVersion: ceph.rook.io/v1
+kind: CephObjectStoreUser
+metadata:
+  name: s3-admin
+  namespace: rook-ceph
+spec:
+  store: store-a
+  displayName: &quot;s3-admin&quot;</code></pre>
+<p>获取 AK/SK：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph get secret rook-ceph-object-user-store-a-s3-admin -o jsonpath=&#39;{.data.AccessKey}&#39; | base64 -d; echo
+kubectl -n rook-ceph get secret rook-ceph-object-user-store-a-s3-admin -o jsonpath=&#39;{.data.SecretKey}&#39; | base64 -d; echo</code></pre>
+<h3 id="section-30">通过 Gateway 暴露 RGW</h3>
+<pre><code class="language-yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rgw-store-a
+  namespace: rook-ceph
+spec:
+  parentRefs:
+  - name: &lt;GATEWAY_NAME&gt;
+    namespace: &lt;GATEWAY_NS&gt;
+  hostnames:
+  - s3.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: rook-ceph-rgw-store-a
+      port: 80</code></pre>
+<h3 id="section-31">客户端访问方式</h3>
+<p>推荐使用 AWS CLI：</p>
+<pre><code class="language-bash">export AWS_ACCESS_KEY_ID=&quot;&lt;S3_ACCESS_KEY&gt;&quot;
+export AWS_SECRET_ACCESS_KEY=&quot;&lt;S3_SECRET_KEY&gt;&quot;
+export AWS_DEFAULT_REGION=&quot;us-east-1&quot;
+export S3_ENDPOINT=&quot;https://s3.example.com&quot;
+
+aws --endpoint-url &quot;$S3_ENDPOINT&quot; s3 mb s3://customer-a
+aws --endpoint-url &quot;$S3_ENDPOINT&quot; s3 cp ./mysql-backup.tar.gz s3://customer-a/mysql-backup.tar.gz
+aws --endpoint-url &quot;$S3_ENDPOINT&quot; s3 cp s3://customer-a/mysql-backup.tar.gz ./mysql-backup.tar.gz
+aws --endpoint-url &quot;$S3_ENDPOINT&quot; s3 ls s3://customer-a/</code></pre>
+<p>若客户端不便持有 AK/SK，可使用预签名 URL：</p>
+<pre><code class="language-bash">aws --endpoint-url https://s3.example.com s3 presign s3://customer-a/mysql-backup.tar.gz --expires-in 3600</code></pre>
+<h2 id="section-32">OSD 新增、替换与下线</h2>
+<h3 id="section-33">操作前检查</h3>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd tree
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd df tree
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph pg stat</code></pre>
+<h3 id="section-34">新增 OSD 节点</h3>
+<p>推荐顺序：</p>
+<ol class="article-list">
+<li class="list-depth-0">将新节点加入 Kubernetes 并确认 <code>Ready</code></li>
+<li class="list-depth-0">清理新数据盘</li>
+<li class="list-depth-0">修改 <code>CephCluster.spec.storage.nodes</code></li>
+<li class="list-depth-0">观察 <code>osd-prepare</code> 与新 OSD 创建</li>
+<li class="list-depth-0">等待 PG 恢复</li>
+</ol>
+<p>清盘命令：</p>
+<pre><code class="language-bash">DEV=/dev/sdb
+sudo wipefs -a $DEV
+sudo sgdisk --zap-all $DEV
+# 如支持 discard，优先：
+# sudo blkdiscard -f $DEV</code></pre>
+<p>示例：</p>
+<pre><code class="language-yaml">spec:
+  storage:
+    nodes:
+    - name: storage-node-01
+      devices:
+      - name: sdb
+    - name: storage-node-02
+      devices:
+      - name: sdb
+    - name: storage-node-03
+      devices:
+      - name: sda
+    - name: storage-node-04
+      devices:
+      - name: sdb</code></pre>
+<p>应用与观察：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph apply -f cephcluster.yaml
+kubectl -n rook-ceph rollout restart deploy/rook-ceph-operator
+kubectl -n rook-ceph get job | grep osd-prepare
+kubectl -n rook-ceph get pod -o wide | egrep &quot;osd-prepare|rook-ceph-osd&quot;
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd tree</code></pre>
+<h3 id="section-35">OSD 安全下线与删除</h3>
+<p>以 <code>osd.0</code> 为例：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd out &lt;OSD_ID&gt;
+# 查看 kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd safe-to-destroy &lt;OSD_ID&gt;
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd purge &lt;OSD_ID&gt; --yes-i-really-mean-it
+
+
+# 修改cephcluster.yaml  
+# 注释掉机器的盘
+    nodes:
+      #- name: storage-node-test
+      #  devices:
+      #    - name: /dev/disk/by-path/pci-0000:02:00.0-scsi-0:0:1:0
+      #    - name: /dev/disk/by-path/pci-0000:02:00.0-scsi-0:0:2:0
+再kubectl apply -f cephcluster.yaml </code></pre>
+<p>关键原则：</p>
+<ul class="article-list">
+<li class="list-depth-0">必须在 <code>safe-to-destroy</code> 返回 OK 后再执行 <code>purge</code></li>
+<li class="list-depth-0"><code>purge</code> 不可逆</li>
+<li class="list-depth-0">在 3 host + size=3 场景下，最佳顺序是先新增 OSD，再删除旧 OSD</li>
+</ul>
+<h3 id="section-36">同节点换盘</h3>
+<p>适用场景：主机不变，仅替换坏盘。</p>
+<p>建议流程：</p>
+<ol class="article-list">
+<li class="list-depth-0">确认坏盘对应 OSD</li>
+<li class="list-depth-0">对该 OSD 执行 <code>out</code></li>
+<li class="list-depth-0">更换并清理新盘</li>
+<li class="list-depth-0">删除该节点的 <code>osd-prepare</code> job 并重启 operator</li>
+<li class="list-depth-0">待新 OSD 创建后，再对旧 OSD 做 <code>safe-to-destroy</code> 与 <code>purge</code></li>
+</ol>
+<pre><code class="language-bash">kubectl -n rook-ceph delete job rook-ceph-osd-prepare-storage-node-01
+kubectl -n rook-ceph rollout restart deploy/rook-ceph-operator</code></pre>
+<h3 id="section-37">整节点替换</h3>
+<p>适用场景：退役旧节点，以新节点替代。</p>
+<p>推荐流程：</p>
+<ol class="article-list">
+<li class="list-depth-0">先让新节点加入存储并创建 OSD</li>
+<li class="list-depth-0">再对旧节点上的 OSD 执行 <code>out</code></li>
+<li class="list-depth-0">等待集群恢复</li>
+<li class="list-depth-0">对旧 OSD 执行 <code>safe-to-destroy</code> 与 <code>purge</code></li>
+<li class="list-depth-0">最后 <code>drain</code> 并下线旧节点</li>
+</ol>
+<h2 id="section-38">恢复回填节流</h2>
+<p>当回填和恢复导致业务抖动时，可临时降低恢复并发：</p>
+<pre><code class="language-bash">ceph tell osd.* injectargs &#39;--osd-max-backfills=1&#39;
+ceph tell osd.* injectargs &#39;--osd-recovery-max-active=1&#39;
+ceph tell osd.* injectargs &#39;--osd-recovery-op-priority=1&#39;
+ceph tell osd.* injectargs &#39;--osd-client-op-priority=63&#39;</code></pre>
+<p>调整后继续观察：</p>
+<pre><code class="language-bash">ceph -s
+ceph pg stat
+ceph health detail</code></pre>
+<h2 id="section-39">常见问题与排查</h2>
+<h3 id="section-40">OSD 没有创建</h3>
+<p>优先查看：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph get job | grep osd-prepare
+kubectl -n rook-ceph logs job/rook-ceph-osd-prepare-&lt;node&gt; -c provision | tail -n 200
+kubectl -n rook-ceph logs deploy/rook-ceph-operator --tail=200</code></pre>
+<p>常见原因：</p>
+<ul class="article-list">
+<li class="list-depth-0">盘上残留旧 Ceph 元数据</li>
+<li class="list-depth-0">设备名填写错误</li>
+<li class="list-depth-0">节点 taint 或调度限制导致 OSD Pod 起不来</li>
+<li class="list-depth-0">节点声明了不存在的磁盘</li>
+</ul>
+<p>顽固旧盘可使用更彻底清理方式：</p>
+<pre><code class="language-bash">DEV=/dev/sdb
+sudo umount ${DEV}* 2&gt;/dev/null || true
+sudo wipefs -a $DEV
+sudo sgdisk --zap-all $DEV
+sudo dd if=/dev/zero of=$DEV bs=1M count=200 conv=fsync
+MB=$(( $(blockdev --getsize64 $DEV) / 1024 / 1024 ))
+sudo dd if=/dev/zero of=$DEV bs=1M seek=$((MB-200)) count=200 conv=fsync
+sudo partprobe $DEV || true</code></pre>
+<h3 id="section-41"><code>safe-to-destroy</code> 报错</h3>
+<p>如果提示：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>OSD(s) have no reported stats</code></li>
+<li class="list-depth-0"><code>not all PGs are active+clean</code></li>
+</ul>
+<p>说明当前仍有 PG 未恢复完成。应先修复故障节点、补充新 OSD 或等待恢复，再重新执行 <code>safe-to-destroy</code>。</p>
+<h3 id="section-42">Namespace 卡在 Terminating</h3>
+<p>先识别阻塞删除的资源和 finalizer；不要在未确认控制器状态及数据影响时直接移除：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph get cephcluster -o name
+kubectl -n rook-ceph get cephcluster &lt;CEPH_CLUSTER_NAME&gt; -o yaml
+# 不要强制删除：先按官方 cleanupPolicy 清理上层资源并确认备份
+kubectl -n rook-ceph get cephcluster</code></pre>
+<p>最后手段：</p>
+<pre><code class="language-bash"># 不在常规手册中提供移除 namespace finalizer 的命令；先定位残留资源和控制器
+kubectl api-resources --verbs=list --namespaced -o name</code></pre>
+<h3 id="section-43">Dashboard 或 RGW 通过 Gateway 访问异常</h3>
+<p>检查点：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>HTTPRoute</code> 或 <code>TLSRoute</code> 是否 <code>Accepted=True</code></li>
+<li class="list-depth-0">Gateway 的 <code>allowedRoutes</code> 是否允许来自 <code>rook-ceph</code></li>
+<li class="list-depth-0">backend service 名称与端口是否正确</li>
+<li class="list-depth-0">证书或 TLS 模式是否与访问方式一致</li>
+</ul>
+<p>集群内连通性验证：</p>
+<pre><code class="language-bash">kubectl -n rook-ceph run tmpcurl --rm -it --image=curlimages/curl -- sh
+curl -vk http://rook-ceph-mgr-dashboard.rook-ceph.svc:8443/
+curl -vk https://rook-ceph-mgr-dashboard.rook-ceph.svc:8443/
+curl -i http://rook-ceph-rgw-store-a.rook-ceph.svc</code></pre>
+<h2 id="section-44">生产建议</h2>
+<ul class="article-list">
+<li class="list-depth-0">关键业务优先使用 SSD/NVMe 对应的独立 pool。</li>
+<li class="list-depth-0">对象存储建议按租户拆分用户与 bucket，避免共用凭据。</li>
+<li class="list-depth-0">Dashboard 对外暴露优先选择 Gateway 终止 TLS，并叠加访问控制。</li>
+<li class="list-depth-0">不要混用系统盘与数据盘，不要依赖 <code>useAllDevices: true</code>。</li>
+<li class="list-depth-0">对于 3 副本池，原始容量规划至少按 3 倍逻辑数据估算，并额外预留恢复空间。</li>
+<li class="list-depth-0">监控应覆盖 OSD 状态、PG 健康、容量阈值、慢操作、节点磁盘与网络质量。</li>
+</ul>
+<h2 id="section-45">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://rook.io/docs/rook/latest-release/Storage-Configuration/Advanced/ceph-osd-mgmt/" target="_blank" rel="noreferrer">Rook Ceph OSD Management</a></li>
+<li class="list-depth-0"><a href="https://rook.io/docs/rook/latest-release/Getting-Started/ceph-teardown/" target="_blank" rel="noreferrer">Rook Ceph Cleanup</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

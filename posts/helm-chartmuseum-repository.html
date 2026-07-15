@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="整理 Helm 仓库、Chart 生命周期、ChartMuseum 部署与推送流程，并补充认证、TLS 和存储安全建议。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Helm 与 ChartMuseum 私有仓库操作手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260715-batch-4" />
+    <script src="/assets/js/main.js?v=20260715-batch-4" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Kubernetes</p>
+        <h1>Helm 与 ChartMuseum 私有仓库操作手册</h1>
+        <p class="article-lead">整理 Helm 仓库、Chart 生命周期、ChartMuseum 部署与推送流程，并补充认证、TLS 和存储安全建议。</p>
+        <div class="article-info"><span>技术手册</span><span>约 14 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-kubernetes" aria-hidden="true">
+        <div class="article-cover-inner"><span>KUBERNETES</span><strong>HELM</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">背景与目标</a>
+          <a class="toc-level-2" href="#section-2">环境说明</a>
+          <a class="toc-level-2" href="#section-3">Helm 安装</a>
+          <a class="toc-level-2" href="#section-4">Helm 仓库管理</a>
+          <a class="toc-level-3" href="#section-5">添加仓库</a>
+          <a class="toc-level-3" href="#section-6">删除仓库</a>
+          <a class="toc-level-3" href="#section-7">查看仓库与可用 Chart</a>
+          <a class="toc-level-2" href="#section-8">Chart 拉取与本地准备</a>
+          <a class="toc-level-3" href="#section-9">拉取 Chart 到本地目录</a>
+          <a class="toc-level-3" href="#section-10">查看 Chart 默认配置</a>
+          <a class="toc-level-2" href="#section-11">Chart 安装、升级与回滚</a>
+          <a class="toc-level-3" href="#section-12">安装 Chart</a>
+          <a class="toc-level-3" href="#section-13">使用自定义配置安装</a>
+          <a class="toc-level-3" href="#section-14">查看已安装 Release</a>
+          <a class="toc-level-3" href="#section-15">卸载 Release</a>
+          <a class="toc-level-3" href="#section-16">升级 Release</a>
+          <a class="toc-level-3" href="#section-17">查看历史版本与回滚</a>
+          <a class="toc-level-2" href="#section-18">自定义 Chart 开发与打包</a>
+          <a class="toc-level-3" href="#section-19">创建 Chart 骨架</a>
+          <a class="toc-level-3" href="#section-20">打包 Chart</a>
+          <a class="toc-level-2" href="#section-21">ChartMuseum 部署方案</a>
+          <a class="toc-level-3" href="#section-22">方案一：Docker 部署</a>
+          <a class="toc-level-3" href="#section-23">方案二：Kubernetes 部署</a>
+          <a class="toc-level-2" href="#section-24">Chart 推送与发布</a>
+          <a class="toc-level-3" href="#section-25">安装推送插件</a>
+          <a class="toc-level-3" href="#section-26">打包并推送 Chart</a>
+          <a class="toc-level-3" href="#section-27">使用 HTTP 接口直接上传</a>
+          <a class="toc-level-2" href="#section-28">镜像同步与受限网络处理</a>
+          <a class="toc-level-2" href="#section-29">多方案选择建议</a>
+          <a class="toc-level-3" href="#section-30">Docker 与 Kubernetes 部署如何选择</a>
+          <a class="toc-level-3" href="#section-31">本地盘 PV 与其他存储方案如何选择</a>
+          <a class="toc-level-3" href="#section-32">--set 与 values.yaml 如何选择</a>
+          <a class="toc-level-2" href="#section-33">注意事项</a>
+          <a class="toc-level-2" href="#section-34">常见问题与排查</a>
+          <a class="toc-level-3" href="#section-35">helm search repo 查不到新包</a>
+          <a class="toc-level-3" href="#section-36">ChartMuseum 已启动但无法上传 Chart</a>
+          <a class="toc-level-3" href="#section-37">Kubernetes 中 ChartMuseum Pod 无法启动</a>
+          <a class="toc-level-3" href="#section-38">Ingress 域名无法访问</a>
+          <a class="toc-level-2" href="#section-39">推荐执行顺序</a>
+          <a class="toc-level-2" href="#section-40">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>安全提示：示例已移除内部仓库地址。生产 ChartMuseum 应启用 TLS 与 Basic/Bearer 认证、限制上传和删除权限，并使用具备备份能力的持久化存储；不要长期使用 runAsUser 0 或 777 权限。执行 helm uninstall 前确认 Release、命名空间、PVC 保留策略和回滚需求。</p></blockquote>
+<h2 id="section-1">背景与目标</h2>
+<p>在 Kubernetes 环境中，Helm 用于统一管理应用 Chart 的打包、分发、安装、升级与回滚。为降低外网依赖、提升交付稳定性，可结合 ChartMuseum 搭建内部 Helm 仓库，提供统一的 Chart 存储与发布入口。</p>
+<p>本文档给出 Helm 安装、仓库管理、Chart 拉取与打包、ChartMuseum 私有仓库部署，以及常见操作与注意事项。适用于以下场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要在内网或受限网络环境中使用 Helm</li>
+<li class="list-depth-0">需要维护企业内部 Chart 仓库</li>
+<li class="list-depth-0">需要同时支持 Docker 单机部署和 Kubernetes 集群部署</li>
+<li class="list-depth-0">需要同步上游镜像到自有镜像仓库后再落地使用</li>
+</ul>
+<h2 id="section-2">环境说明</h2>
+<ul class="article-list">
+<li class="list-depth-0">操作系统：Linux</li>
+<li class="list-depth-0">Helm：建议使用 Helm 3</li>
+<li class="list-depth-0">Kubernetes：适用于已具备 Ingress 能力的集群</li>
+<li class="list-depth-0">私有镜像仓库示例：<code>registry.example.com/charts</code></li>
+<li class="list-depth-0">ChartMuseum 服务端口：<code>8080</code></li>
+<li class="list-depth-0">Kubernetes 命名空间示例：<code>infra</code></li>
+</ul>
+<h2 id="section-3">Helm 安装</h2>
+<p>优先使用官方二进制安装方式，便于明确版本与升级策略。</p>
+<pre><code class="language-bash">tar -zxvf helm-v3.8.2-linux-amd64.tar.gz
+mv linux-amd64/helm /usr/local/bin/helm
+helm version
+echo &quot;source &lt;(helm completion bash)&quot; &gt;&gt; ~/.bashrc
+source ~/.bashrc</code></pre>
+<p>也可使用官方安装脚本：</p>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version --short</code></pre>
+<p>参考文档：&lt;https://helm.sh/zh/docs/intro/install/&gt;</p>
+<h2 id="section-4">Helm 仓库管理</h2>
+<h3 id="section-5">添加仓库</h3>
+<pre><code class="language-bash">helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo add aliyun https://kubernetes.oss-cn-hangzhou.aliyuncs.com/charts
+helm repo add internal-charts http://charts.example.com/</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>bitnami</code> 适合作为常用基础组件 Chart 来源</li>
+<li class="list-depth-0"><code>aliyun</code> 可作为部分环境下的替代源</li>
+<li class="list-depth-0"><code>internal-charts</code> 为内部 ChartMuseum 仓库示例</li>
+</ul>
+<h3 id="section-6">删除仓库</h3>
+<pre><code class="language-bash">helm repo remove aliyun</code></pre>
+<h3 id="section-7">查看仓库与可用 Chart</h3>
+<pre><code class="language-bash">helm repo list
+helm search repo
+helm search repo nginx
+helm search repo harbor/harbor -l
+helm search repo bitnami/elasticsearch -l
+helm search repo prometheus-community/kube-prometheus-stack -l
+helm search repo vm/victoria-metrics-single -l</code></pre>
+<p>建议在安装前先查看可用版本，再明确指定版本，避免上游更新导致部署结果漂移。</p>
+<h2 id="section-8">Chart 拉取与本地准备</h2>
+<h3 id="section-9">拉取 Chart 到本地目录</h3>
+<pre><code class="language-bash">helm pull bitnami/elasticsearch --version 21.3.24 --untar
+helm pull bitnami/kafka --version 31.4.0 --untar
+helm pull harbor/harbor --version 1.18.2 --untar
+helm pull prometheus-community/kube-prometheus-stack --version 81.3.0 --untar
+helm pull vm/victoria-metrics-single --version 0.29.0 --untar</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>--untar</code> 会直接解压到当前目录，便于修改 <code>values.yaml</code></li>
+<li class="list-depth-0">历史命令中存在带 <code>v</code> 前缀的版本写法，实际使用时应以仓库中可查询到的真实版本号为准</li>
+</ul>
+<h3 id="section-10">查看 Chart 默认配置</h3>
+<pre><code class="language-bash">helm show values bitnami/wordpress</code></pre>
+<h2 id="section-11">Chart 安装、升级与回滚</h2>
+<h3 id="section-12">安装 Chart</h3>
+<pre><code class="language-bash">helm install mysql-01 bitnami/mysql</code></pre>
+<p>如果需要自动生成 Release 名称：</p>
+<pre><code class="language-bash">helm install bitnami/mysql --generate-name</code></pre>
+<h3 id="section-13">使用自定义配置安装</h3>
+<p>示例 <code>values.yaml</code>：</p>
+<pre><code class="language-yaml">mariadb:
+  auth:
+    database: user0db
+    username: user0</code></pre>
+<p>安装命令：</p>
+<pre><code class="language-bash">helm install -f values.yaml my-wordpress bitnami/wordpress</code></pre>
+<p>也可通过 <code>--set</code> 传参：</p>
+<pre><code class="language-bash">helm install my-app bitnami/wordpress \
+  --set servers[0].port=80,servers[0].host=example</code></pre>
+<p>对应配置结构：</p>
+<pre><code class="language-yaml">servers:
+  - port: 80
+    host: example</code></pre>
+<p>建议：</p>
+<ul class="article-list">
+<li class="list-depth-0">简单参数覆盖可使用 <code>--set</code></li>
+<li class="list-depth-0">配置项较多时使用独立 <code>values.yaml</code> 更易维护</li>
+</ul>
+<h3 id="section-14">查看已安装 Release</h3>
+<pre><code class="language-bash">helm ls</code></pre>
+<h3 id="section-15">卸载 Release</h3>
+<pre><code class="language-bash">helm uninstall mysql-1612624192 -n default</code></pre>
+<h3 id="section-16">升级 Release</h3>
+<pre><code class="language-bash">helm upgrade -f panda.yaml happy-panda bitnami/wordpress</code></pre>
+<h3 id="section-17">查看历史版本与回滚</h3>
+<pre><code class="language-bash">helm history nginx-1728386725
+helm rollback happy-panda 1</code></pre>
+<h2 id="section-18">自定义 Chart 开发与打包</h2>
+<h3 id="section-19">创建 Chart 骨架</h3>
+<pre><code class="language-bash">helm create wordpress</code></pre>
+<p>默认目录结构如下：</p>
+<pre><code class="language-text">wordpress/
+├── charts
+├── Chart.yaml
+├── templates
+│   ├── deployment.yaml
+│   ├── _helpers.tpl
+│   ├── hpa.yaml
+│   ├── ingress.yaml
+│   ├── NOTES.txt
+│   ├── serviceaccount.yaml
+│   ├── service.yaml
+│   └── tests
+│       └── test-connection.yaml
+└── values.yaml</code></pre>
+<h3 id="section-20">打包 Chart</h3>
+<pre><code class="language-bash">helm package .</code></pre>
+<p>如果当前目录为 Chart 根目录，执行后将生成 <code>.tgz</code> 包，可用于推送到私有仓库。</p>
+<h2 id="section-21">ChartMuseum 部署方案</h2>
+<p>ChartMuseum 适合作为 Helm 私有仓库服务端。本文保留两种可用方案：</p>
+<ul class="article-list">
+<li class="list-depth-0">Docker 部署：适合单机快速验证、测试环境或临时仓库</li>
+<li class="list-depth-0">Kubernetes 部署：适合集群内长期运行，并通过 PVC 持久化</li>
+</ul>
+<h3 id="section-22">方案一：Docker 部署</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">无需依赖 Kubernetes</li>
+<li class="list-depth-0">需要快速启动一个私有 Helm 仓库</li>
+<li class="list-depth-0">本地开发、测试或小规模使用</li>
+</ul>
+<p>部署命令：</p>
+<pre><code class="language-bash">mkdir -p /docker/charts
+chmod -R 777 /docker/charts
+
+docker run -d \
+  -p 8080:8080 \
+  -e DEBUG=1 \
+  -e STORAGE=local \
+  -e STORAGE_LOCAL_ROOTDIR=/charts \
+  --name=chartmuseum \
+  -v /docker/charts:/charts \
+  registry.example.com/charts/chartmuseum:latest</code></pre>
+<p>验证：</p>
+<pre><code class="language-bash">curl localhost:8080/api/charts</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">本地目录 <code>/docker/charts</code> 用于持久化 Chart 数据</li>
+<li class="list-depth-0"><code>DEBUG=1</code> 便于初期排错，生产环境可按需关闭</li>
+<li class="list-depth-0"><code>chmod 777</code> 虽便于快速启动，但生产环境建议按实际运行用户收敛目录权限</li>
+</ul>
+<h3 id="section-23">方案二：Kubernetes 部署</h3>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">需要在集群内长期运行 ChartMuseum</li>
+<li class="list-depth-0">需要通过 PV/PVC 持久化数据</li>
+<li class="list-depth-0">需要通过 Ingress 对外提供访问入口</li>
+</ul>
+<p>推荐配置示例：</p>
+<pre><code class="language-yaml">---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: chartmuseum-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: chartmuseum-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: chartmuseum-local
+  local:
+    path: /pvc/chartmuseum_data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - node-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chartmuseum-pvc
+  namespace: infra
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: chartmuseum-local
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chartmuseum
+  namespace: infra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chartmuseum
+  template:
+    metadata:
+      labels:
+        app: chartmuseum
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: chartmuseum
+          image: registry.example.com/charts/chartmuseum:v0.13.1
+          args:
+            - --storage=local
+            - --storage-local-rootdir=/charts
+          securityContext:
+            runAsUser: 0
+          resources:
+            requests:
+              memory: &quot;128Mi&quot;
+              cpu: &quot;100m&quot;
+          ports:
+            - containerPort: 8080
+              name: server
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+          volumeMounts:
+            - name: datadir
+              mountPath: /charts
+      volumes:
+        - name: datadir
+          persistentVolumeClaim:
+            claimName: chartmuseum-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chartmuseum
+  namespace: infra
+spec:
+  selector:
+    app: chartmuseum
+  ports:
+    - name: server
+      port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chartmuseum
+  namespace: infra
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: charts.example.com
+      http:
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: chartmuseum
+                port:
+                  number: 8080</code></pre>
+<p>部署前需要确认：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>node-1</code> 必须替换为实际存储所在节点的主机名</li>
+<li class="list-depth-0"><code>/pvc/chartmuseum_data</code> 必须在目标节点上提前创建</li>
+<li class="list-depth-0"><code>infra</code> 命名空间必须已存在</li>
+<li class="list-depth-0">Ingress 控制器已就绪，且域名 <code>charts.example.com</code> 已正确解析</li>
+</ul>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">当前方案使用本地盘 <code>local PV</code>，适合单节点绑定场景</li>
+<li class="list-depth-0">若需要跨节点高可用，建议改造为网络存储或对象存储方案</li>
+<li class="list-depth-0"><code>persistentVolumeReclaimPolicy: Retain</code> 可避免误删 PVC 时直接清空数据</li>
+</ul>
+<h2 id="section-24">Chart 推送与发布</h2>
+<h3 id="section-25">安装推送插件</h3>
+<pre><code class="language-bash">helm plugin install https://github.com/chartmuseum/helm-push.git</code></pre>
+<h3 id="section-26">打包并推送 Chart</h3>
+<pre><code class="language-bash">helm package ./mychart
+helm cm-push mychart-1.0.0.tgz myrepo
+helm repo update</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>myrepo</code> 需提前通过 <code>helm repo add</code> 配置为 ChartMuseum 仓库</li>
+<li class="list-depth-0">推送完成后执行 <code>helm repo update</code>，客户端才能及时拉到最新索引</li>
+</ul>
+<h3 id="section-27">使用 HTTP 接口直接上传</h3>
+<pre><code class="language-bash">curl --data-binary &quot;@mychart-0.1.0.tgz&quot; http://localhost:8080/api/charts</code></pre>
+<p>适用场景：</p>
+<ul class="article-list">
+<li class="list-depth-0">不希望安装 Helm 插件</li>
+<li class="list-depth-0">需要在 CI/CD 中直接使用 HTTP 接口上传</li>
+</ul>
+<h2 id="section-28">镜像同步与受限网络处理</h2>
+<p>在网络受限或集群无法直接访问公共镜像源时，可先拉取上游镜像，再重标记并推送到内部或云上镜像仓库。</p>
+<p>示例：</p>
+<pre><code class="language-bash">IMAGE_NAME=&quot;bitnamilegacy/mysql:8.0.39-debian-12-r0&quot;
+docker pull &quot;$IMAGE_NAME&quot;
+
+IMAGE_VER=&quot;mysql:bitnami.8.0.39-debian-12-r0&quot;
+docker tag &quot;$IMAGE_NAME&quot; &quot;registry.example.com/charts/$IMAGE_VER&quot;
+docker push &quot;registry.example.com/charts/$IMAGE_VER&quot;
+
+echo &quot;上传镜像成功：registry.example.com/charts/$IMAGE_VER&quot;
+
+docker rmi &quot;registry.example.com/charts/$IMAGE_VER&quot;
+docker rmi &quot;$IMAGE_NAME&quot;</code></pre>
+<p>说明：</p>
+<ul class="article-list">
+<li class="list-depth-0">原始脚本中的变量名写成了 <code>IMGAE_NAME</code>，建议修正为 <code>IMAGE_NAME</code></li>
+<li class="list-depth-0">推送完成后删除本地镜像，可减少磁盘占用</li>
+<li class="list-depth-0">建议统一约定镜像命名规则，便于 Helm values 中批量替换镜像地址</li>
+</ul>
+<p>常见预拉取镜像示例：</p>
+<pre><code class="language-bash">docker pull bitnamilegacy/elasticsearch:7.17.5
+docker pull bitnamilegacy/os-shell:12-debian-12-r33
+docker pull bitnamilegacy/elasticsearch-exporter:1.3.0-debian-11-r14
+docker pull bitnamilegacy/kibana:7.17.5
+docker pull bitnamilegacy/kibana:8.17.0
+docker pull elastic/filebeat:8.17.0</code></pre>
+<h2 id="section-29">多方案选择建议</h2>
+<h3 id="section-30">Docker 与 Kubernetes 部署如何选择</h3>
+<ul class="article-list">
+<li class="list-depth-0">仅用于本机测试或临时仓库时，优先使用 Docker 部署，启动快、依赖少</li>
+<li class="list-depth-0">需要团队共用、长期运行、通过域名访问时，优先使用 Kubernetes 部署</li>
+<li class="list-depth-0">需要与集群内业务统一纳管、统一备份、统一暴露入口时，应选择 Kubernetes 部署</li>
+</ul>
+<h3 id="section-31">本地盘 PV 与其他存储方案如何选择</h3>
+<ul class="article-list">
+<li class="list-depth-0">单节点、低复杂度场景可继续使用本地盘 PV</li>
+<li class="list-depth-0">涉及节点迁移、容灾或高可用时，不建议继续依赖本地盘路径绑定</li>
+<li class="list-depth-0">如果后续需要扩展为高可用仓库，应考虑共享存储或对象存储后端</li>
+</ul>
+<h3 id="section-32"><code>--set</code> 与 <code>values.yaml</code> 如何选择</h3>
+<ul class="article-list">
+<li class="list-depth-0">参数少、临时调试时使用 <code>--set</code></li>
+<li class="list-depth-0">长期维护、多人协作、环境差异明显时使用 <code>values.yaml</code></li>
+</ul>
+<h2 id="section-33">注意事项</h2>
+<ul class="article-list">
+<li class="list-depth-0">Helm 安装和 Chart 拉取前，先确认仓库源可达</li>
+<li class="list-depth-0">安装前应固定 Chart 版本，避免隐式升级</li>
+<li class="list-depth-0">使用 ChartMuseum 时，必须保证存储目录持久化</li>
+<li class="list-depth-0">使用本地盘 PV 时，Pod 调度会受节点绑定限制</li>
+<li class="list-depth-0">Ingress 域名需要提前完成 DNS 或 hosts 配置</li>
+<li class="list-depth-0">生产环境应审查容器运行用户、目录权限与镜像来源，不建议长期依赖 <code>runAsUser: 0</code> 和 <code>777</code> 权限</li>
+</ul>
+<h2 id="section-34">常见问题与排查</h2>
+<h3 id="section-35"><code>helm search repo</code> 查不到新包</h3>
+<p>处理方式：</p>
+<pre><code class="language-bash">helm repo update
+helm search repo &lt;repo-name&gt;/&lt;chart-name&gt; -l</code></pre>
+<h3 id="section-36">ChartMuseum 已启动但无法上传 Chart</h3>
+<p>检查项：</p>
+<ul class="article-list">
+<li class="list-depth-0">服务端口 <code>8080</code> 是否正常监听</li>
+<li class="list-depth-0">存储目录是否已挂载并具备写权限</li>
+<li class="list-depth-0">是否访问了正确的上传接口 <code>/api/charts</code></li>
+<li class="list-depth-0">是否已安装 <code>helm-push</code> 插件</li>
+</ul>
+<h3 id="section-37">Kubernetes 中 ChartMuseum Pod 无法启动</h3>
+<p>检查项：</p>
+<ul class="article-list">
+<li class="list-depth-0">PVC 是否成功绑定 PV</li>
+<li class="list-depth-0"><code>nodeAffinity</code> 中节点名称是否正确</li>
+<li class="list-depth-0">节点本地目录是否存在</li>
+<li class="list-depth-0"><code>infra</code> 命名空间是否存在</li>
+<li class="list-depth-0">镜像地址是否可拉取</li>
+</ul>
+<h3 id="section-38">Ingress 域名无法访问</h3>
+<p>检查项：</p>
+<ul class="article-list">
+<li class="list-depth-0">Ingress Controller 是否正常运行</li>
+<li class="list-depth-0"><code>ingressClassName: nginx</code> 是否与集群实际控制器一致</li>
+<li class="list-depth-0">域名解析是否指向 Ingress 入口地址</li>
+<li class="list-depth-0">Service 与 Pod 标签是否匹配</li>
+</ul>
+<h2 id="section-39">推荐执行顺序</h2>
+<ol class="article-list">
+<li class="list-depth-0">安装 Helm 并验证版本</li>
+<li class="list-depth-0">添加公共仓库与内部仓库</li>
+<li class="list-depth-0">查询并确定目标 Chart 版本</li>
+<li class="list-depth-0">拉取 Chart 到本地并按需修改 <code>values.yaml</code></li>
+<li class="list-depth-0">在受限网络环境下先同步依赖镜像到私有镜像仓库</li>
+<li class="list-depth-0">部署 ChartMuseum</li>
+<li class="list-depth-0">配置客户端仓库地址并执行推送、安装、升级与回滚</li>
+</ol>
+<h2 id="section-40">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://chartmuseum.com/docs/" target="_blank" rel="noreferrer">ChartMuseum 官方文档</a></li>
+<li class="list-depth-0"><a href="https://helm.sh/docs/topics/chart_repository/" target="_blank" rel="noreferrer">Helm Chart Repository Guide</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>
