@@ -6,9 +6,16 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260715-batch-5';
+const assetVersion = '20260716-batch-6';
 
 const posts = [
+  {
+    sourceTitle: 'Calico CNI 网络模式详解与 Kubernetes 部署配置指南',
+    title: 'Calico CNI 网络模式选择、部署与变更手册',
+    slug: 'calico-network-modes-deployment', category: 'Kubernetes', symbol: 'CNI',
+    summary: '对比 IP-in-IP、VXLAN、CrossSubnet 与无封装网络，覆盖 Operator 部署、IPPool 变更、验证和回滚。',
+    tags: ['Calico', 'CNI']
+  },
   {
     sourceTitle: 'OpenVPN 多场景部署与运维手册',
     title: 'OpenVPN 多场景部署与安全运维手册',

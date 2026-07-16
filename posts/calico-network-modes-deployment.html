@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="对比 IP-in-IP、VXLAN、CrossSubnet 与无封装网络，覆盖 Operator 部署、IPPool 变更、验证和回滚。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Calico CNI 网络模式选择、部署与变更手册 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260716-batch-6" />
+    <script src="/assets/js/main.js?v=20260716-batch-6" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Kubernetes</p>
+        <h1>Calico CNI 网络模式选择、部署与变更手册</h1>
+        <p class="article-lead">对比 IP-in-IP、VXLAN、CrossSubnet 与无封装网络，覆盖 Operator 部署、IPPool 变更、验证和回滚。</p>
+        <div class="article-info"><span>技术手册</span><span>约 10 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-kubernetes" aria-hidden="true">
+        <div class="article-cover-inner"><span>KUBERNETES</span><strong>CNI</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">先理解三个概念</a>
+          <a class="toc-level-3" href="#section-2">封装模式</a>
+          <a class="toc-level-3" href="#section-3">Always 与 CrossSubnet</a>
+          <a class="toc-level-3" href="#section-4">BGP 不是另一种隧道</a>
+          <a class="toc-level-2" href="#section-5">模式对比与选择</a>
+          <a class="toc-level-2" href="#section-6">安装前准备</a>
+          <a class="toc-level-2" href="#section-7">推荐方式：Tigera Operator 部署</a>
+          <a class="toc-level-2" href="#section-8">兼容方式：原始 Manifest 部署</a>
+          <a class="toc-level-2" href="#section-9">查看当前 IPPool</a>
+          <a class="toc-level-2" href="#section-10">已运行集群切换封装模式</a>
+          <a class="toc-level-3" href="#section-11">备份当前状态</a>
+          <a class="toc-level-3" href="#section-12">Manifest 管理集群的变更示例</a>
+          <a class="toc-level-3" href="#section-13">回滚</a>
+          <a class="toc-level-2" href="#section-14">验证清单</a>
+          <a class="toc-level-3" href="#section-15">控制面和组件状态</a>
+          <a class="toc-level-3" href="#section-16">节点隧道和路由</a>
+          <a class="toc-level-3" href="#section-17">工作负载连通性</a>
+          <a class="toc-level-2" href="#section-18">常见故障</a>
+          <a class="toc-level-3" href="#section-19">同节点正常，跨节点不通</a>
+          <a class="toc-level-3" href="#section-20">大包失败或连接偶发卡顿</a>
+          <a class="toc-level-3" href="#section-21">CrossSubnet 行为与预期不一致</a>
+          <a class="toc-level-3" href="#section-22">模式切换后部分连接仍异常</a>
+          <a class="toc-level-2" href="#section-23">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>本文以 Calico Open Source 3.32.1 为示例，地址均为文档示例。安装或修改前请以当前官方版本和集群兼容矩阵为准。切换 IP-in-IP、VXLAN 或无封装模式可能中断现有连接；生产集群必须先备份资源、确认节点间网络和带外入口，并安排维护窗口。</p></blockquote>
+<p>Calico 同时提供 CNI、IPAM、网络策略和路由能力。选择网络模式时，重点不是寻找一个适用于所有环境的“最佳模式”，而是判断底层网络能否学习 Pod 路由、是否允许相应协议，以及能否接受封装带来的 MTU 和性能开销。</p>
+<h2 id="section-1">先理解三个概念</h2>
+<h3 id="section-2">封装模式</h3>
+<ul class="article-list">
+<li class="list-depth-0"><strong>IP-in-IP</strong>：用 IP 协议 4 封装 IPv4 工作负载流量，配置项为 <code>ipipMode</code>。</li>
+<li class="list-depth-0"><strong>VXLAN</strong>：通过 VXLAN 隧道承载工作负载流量，配置项为 <code>vxlanMode</code>。</li>
+<li class="list-depth-0"><strong>无封装</strong>：数据包不套额外隧道头，底层网络必须具备到各节点 Pod 网段的路由。</li>
+</ul>
+<h3 id="section-3">Always 与 CrossSubnet</h3>
+<ul class="article-list">
+<li class="list-depth-0"><code>Always</code>：跨节点流量始终封装，底层依赖少，但封装和 MTU 开销更明显。</li>
+<li class="list-depth-0"><code>CrossSubnet</code>：仅当源、目标节点不在同一子网时封装；同子网流量直接路由。</li>
+<li class="list-depth-0"><code>Never</code>：对应隧道类型不启用。</li>
+</ul>
+<p>CrossSubnet 的判断依据是 Calico Node 资源中记录的节点地址和子网，因此多网卡主机必须先确认节点 IP 自动探测结果正确。</p>
+<h3 id="section-4">BGP 不是另一种隧道</h3>
+<p>BGP 用来分发路由。IP-in-IP 池和无封装池都可能使用 BGP 传播集群路由；VXLAN 场景则可以由 Felix 编程集群路由，不一定需要内部 BGP。将“BGP”和“IPIP/VXLAN”简单列为互斥网络模式容易造成误解。</p>
+<h2 id="section-5">模式对比与选择</h2>
+<div class="table-wrap"><table><thead><tr>
+<th>方案</th>
+<th>同子网流量</th>
+<th>跨子网流量</th>
+<th>底层网络要求</th>
+<th>典型场景</th>
+</tr></thead><tbody>
+<tr>
+<td>IP-in-IP Always</td>
+<td>IP-in-IP</td>
+<td>IP-in-IP</td>
+<td>节点间允许 IP 协议 4</td>
+<td>IPv4、自建网络且希望降低底层路由依赖</td>
+</tr>
+<tr>
+<td>IP-in-IP CrossSubnet</td>
+<td>不封装</td>
+<td>IP-in-IP</td>
+<td>同子网可直达，跨子网允许 IP 协议 4</td>
+<td>多数 IPv4 VMware、KVM 或物理机集群</td>
+</tr>
+<tr>
+<td>VXLAN Always</td>
+<td>VXLAN</td>
+<td>VXLAN</td>
+<td>节点间允许 VXLAN</td>
+<td>不支持 IP-in-IP 或希望使用 VXLAN 的环境</td>
+</tr>
+<tr>
+<td>VXLAN CrossSubnet</td>
+<td>不封装</td>
+<td>VXLAN</td>
+<td>同子网可直达，跨子网允许 VXLAN</td>
+<td>多子网、希望减少封装的云或虚拟化环境</td>
+</tr>
+<tr>
+<td>无封装</td>
+<td>不封装</td>
+<td>不封装</td>
+<td>底层路由或 BGP 必须学习 Pod 路由</td>
+<td>网络设备可控、追求低开销的自建网络</td>
+</tr>
+</tbody></table></div>
+<p>选择时先确认：</p>
+<ol class="article-list">
+<li class="list-depth-0">Pod CIDR 是否与节点网段、Service CIDR、VPN 和现有路由重叠。</li>
+<li class="list-depth-0">云平台或防火墙是否允许所选封装协议。</li>
+<li class="list-depth-0">底层 MTU 是否足以容纳隧道头，或是否已正确下调 Calico MTU。</li>
+<li class="list-depth-0">多网卡节点是否选择了正确的内部地址。</li>
+<li class="list-depth-0">无封装方案的 Pod 路由由 BGP、路由反射器、ToR 还是 Felix 负责。</li>
+</ol>
+<h2 id="section-6">安装前准备</h2>
+<p>本文使用以下示例 Pod CIDR：</p>
+<pre><code class="language-yaml">networking:
+  podSubnet: 10.244.0.0/16</code></pre>
+<p>如果使用 kubeadm，初始化配置中的 Pod CIDR 与 Calico IPPool 必须保持一致。先完成以下检查：</p>
+<pre><code class="language-bash">kubectl cluster-info
+kubectl get nodes -o wide
+kubectl get pods -A</code></pre>
+<p>如果集群已经安装其他 CNI，不要直接叠加安装 Calico。应先制定 CNI 迁移方案并确认 Pod、节点路由和网络策略的迁移影响。</p>
+<h2 id="section-7">推荐方式：Tigera Operator 部署</h2>
+<p>Calico 官方建议新集群使用 Operator 管理安装、升级和扩缩容。以下版本号仅对应本文验证时的官方版本：</p>
+<pre><code class="language-bash">CALICO_VERSION=v3.32.1
+
+kubectl create -f \
+  &quot;https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/v1_crd_projectcalico_org.yaml&quot;
+
+kubectl create -f \
+  &quot;https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/tigera-operator.yaml&quot;
+
+curl -fsSLO \
+  &quot;https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/custom-resources.yaml&quot;</code></pre>
+<p>在应用前编辑 <code>custom-resources.yaml</code>。下面是 IP-in-IP CrossSubnet 的关键配置示例：</p>
+<pre><code class="language-yaml">apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    bgp: Enabled
+    ipPools:
+      - cidr: 10.244.0.0/16
+        blockSize: 26
+        encapsulation: IPIPCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()</code></pre>
+<p>常用 <code>encapsulation</code> 值：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>IPIP</code>：IP-in-IP Always。</li>
+<li class="list-depth-0"><code>IPIPCrossSubnet</code>：IP-in-IP CrossSubnet。</li>
+<li class="list-depth-0"><code>VXLAN</code>：VXLAN Always。</li>
+<li class="list-depth-0"><code>VXLANCrossSubnet</code>：VXLAN CrossSubnet。</li>
+<li class="list-depth-0"><code>None</code>：无封装。</li>
+</ul>
+<p>应用并观察状态：</p>
+<pre><code class="language-bash">kubectl create -f custom-resources.yaml
+watch kubectl get tigerastatus</code></pre>
+<p>当相关组件的 <code>AVAILABLE</code> 为 <code>True</code>，且 <code>PROGRESSING</code>、<code>DEGRADED</code> 为 <code>False</code> 后，再继续进行业务连通性验证。</p>
+<h2 id="section-8">兼容方式：原始 Manifest 部署</h2>
+<p>原始 Manifest 适合必须深度修改底层 Kubernetes 资源的环境，但无法像 Operator 一样管理完整生命周期，新集群通常不优先采用。</p>
+<pre><code class="language-bash">CALICO_VERSION=v3.32.1
+curl -fsSL -o calico.yaml \
+  &quot;https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml&quot;</code></pre>
+<p>非 kubeadm 平台或需要显式配置时，确认 <code>calico-node</code> 中的环境变量：</p>
+<pre><code class="language-yaml">- name: CALICO_IPV4POOL_CIDR
+  value: &quot;10.244.0.0/16&quot;
+- name: CALICO_IPV4POOL_IPIP
+  value: &quot;CrossSubnet&quot;
+- name: CALICO_IPV4POOL_VXLAN
+  value: &quot;Never&quot;</code></pre>
+<p>应用并观察 DaemonSet：</p>
+<pre><code class="language-bash">kubectl apply -f calico.yaml
+kubectl -n kube-system rollout status daemonset/calico-node
+kubectl get nodes -o wide</code></pre>
+<p>不要直接下载 <code>latest</code> 或不固定版本的生产清单。升级前应先阅读版本说明和 Kubernetes 兼容矩阵。</p>
+<h2 id="section-9">查看当前 IPPool</h2>
+<p>不同安装方式下资源展示可能略有差异，优先从 Kubernetes API 读取实际配置：</p>
+<pre><code class="language-bash">kubectl get ippools.crd.projectcalico.org -o wide
+kubectl get ippool default-ipv4-ippool -o yaml</code></pre>
+<p>重点检查：</p>
+<pre><code class="language-yaml">spec:
+  cidr: 10.244.0.0/16
+  ipipMode: CrossSubnet
+  vxlanMode: Never
+  natOutgoing: true
+  nodeSelector: all()</code></pre>
+<p>Operator 管理的 IPPool 应通过 <code>Installation/default</code> 修改，不要直接编辑 IPPool，否则 Operator 可能将配置恢复为期望状态：</p>
+<pre><code class="language-bash">kubectl get installation.operator.tigera.io default -o yaml</code></pre>
+<h2 id="section-10">已运行集群切换封装模式</h2>
+<blockquote><p>这是有中断风险的网络变更。模式切换会改变节点隧道设备和路由，已有连接可能中断。必须先在测试集群验证，并准备 API Server、节点控制台和配置回滚入口。</p></blockquote>
+<h3 id="section-11">备份当前状态</h3>
+<pre><code class="language-bash">mkdir -p calico-backup
+
+kubectl get installation.operator.tigera.io default -o yaml \
+  &gt; calico-backup/installation.yaml 2&gt;/dev/null || true
+
+kubectl get ippool default-ipv4-ippool -o yaml \
+  &gt; calico-backup/default-ipv4-ippool.yaml
+
+kubectl get felixconfiguration default -o yaml \
+  &gt; calico-backup/felixconfiguration.yaml 2&gt;/dev/null || true</code></pre>
+<p>同时记录节点、Pod、路由和 Calico 组件状态：</p>
+<pre><code class="language-bash">kubectl get nodes -o wide
+kubectl get pods -A -o wide
+kubectl get ippool default-ipv4-ippool -o yaml</code></pre>
+<h3 id="section-12">Manifest 管理集群的变更示例</h3>
+<p>先做服务端预演，确认补丁可以被 API Server 接受：</p>
+<pre><code class="language-bash">kubectl patch ippool default-ipv4-ippool \
+  --type=merge \
+  --patch &#39;{&quot;spec&quot;:{&quot;ipipMode&quot;:&quot;CrossSubnet&quot;,&quot;vxlanMode&quot;:&quot;Never&quot;}}&#39; \
+  --dry-run=server -o yaml</code></pre>
+<p>在维护窗口内应用：</p>
+<pre><code class="language-bash">kubectl patch ippool default-ipv4-ippool \
+  --type=merge \
+  --patch &#39;{&quot;spec&quot;:{&quot;ipipMode&quot;:&quot;CrossSubnet&quot;,&quot;vxlanMode&quot;:&quot;Never&quot;}}&#39;</code></pre>
+<p>切换为 VXLAN CrossSubnet 时，将目标改为：</p>
+<pre><code class="language-json">{&quot;spec&quot;:{&quot;ipipMode&quot;:&quot;Never&quot;,&quot;vxlanMode&quot;:&quot;CrossSubnet&quot;}}</code></pre>
+<p>Operator 管理的集群应修改 <code>Installation/default</code> 中对应 IPPool 的 <code>encapsulation</code>，让 Operator 完成协调，不要使用上面的 IPPool 直改命令。</p>
+<h3 id="section-13">回滚</h3>
+<p>如果变更后出现跨节点不通，优先恢复变更前的模式字段，而不是直接重启所有节点：</p>
+<pre><code class="language-bash">kubectl patch ippool default-ipv4-ippool \
+  --type=merge \
+  --patch &#39;{&quot;spec&quot;:{&quot;ipipMode&quot;:&quot;Always&quot;,&quot;vxlanMode&quot;:&quot;Never&quot;}}&#39;</code></pre>
+<p>回滚值必须来自变更前备份；上面的 <code>Always/Never</code> 仅用于说明命令结构。</p>
+<h2 id="section-14">验证清单</h2>
+<h3 id="section-15">控制面和组件状态</h3>
+<pre><code class="language-bash">kubectl get nodes
+kubectl get tigerastatus 2&gt;/dev/null || true
+kubectl -n calico-system get pods -o wide 2&gt;/dev/null || true
+kubectl -n kube-system get pods -l k8s-app=calico-node -o wide
+kubectl get ippool default-ipv4-ippool -o yaml</code></pre>
+<h3 id="section-16">节点隧道和路由</h3>
+<p>在至少两台不同子网的节点上检查：</p>
+<pre><code class="language-bash">ip -d link show tunl0
+ip -d link show vxlan.calico
+ip route</code></pre>
+<p>预期表现：</p>
+<ul class="article-list">
+<li class="list-depth-0">IP-in-IP 模式通常可以看到 <code>tunl0</code>。</li>
+<li class="list-depth-0">VXLAN 模式通常可以看到 <code>vxlan.calico</code>。</li>
+<li class="list-depth-0">无封装模式不依赖这两个隧道接口，但必须存在到其他节点 Pod 网段的有效路由。</li>
+</ul>
+<p>如果启用了 BGP，还要检查邻居状态：</p>
+<pre><code class="language-bash">calicoctl node status</code></pre>
+<h3 id="section-17">工作负载连通性</h3>
+<p>选择位于不同节点的现有测试 Pod，验证 Pod IP、Service IP、DNS 和外部访问。不要只用节点间 <code>ping</code> 代替工作负载测试：</p>
+<pre><code class="language-bash">kubectl get pods -A -o wide
+kubectl exec -n &lt;NAMESPACE&gt; &lt;SOURCE_POD&gt; -- ping -c 3 &lt;TARGET_POD_IP&gt;
+kubectl exec -n &lt;NAMESPACE&gt; &lt;SOURCE_POD&gt; -- nslookup kubernetes.default.svc</code></pre>
+<p>生产验证还应覆盖 NetworkPolicy、NodePort/Ingress、宿主机到 Pod、Pod 到外部依赖以及跨子网通信。</p>
+<h2 id="section-18">常见故障</h2>
+<h3 id="section-19">同节点正常，跨节点不通</h3>
+<p>依次检查：</p>
+<ul class="article-list">
+<li class="list-depth-0">节点间是否允许所选封装协议或 BGP。</li>
+<li class="list-depth-0"><code>ipipMode</code> 与 <code>vxlanMode</code> 是否符合预期。</li>
+<li class="list-depth-0">节点 IP 自动探测是否选错管理网、存储网或公网接口。</li>
+<li class="list-depth-0">路由表中是否存在到远端 Pod block 的路由。</li>
+<li class="list-depth-0">安全组、主机防火墙和反向路径过滤是否丢弃流量。</li>
+</ul>
+<h3 id="section-20">大包失败或连接偶发卡顿</h3>
+<p>封装会减少可用 MTU。先使用禁止分片的探测确认路径 MTU，再检查 Calico 自动探测结果和 CNI MTU 配置；不要未经测试就统一写死一个 MTU。</p>
+<h3 id="section-21">CrossSubnet 行为与预期不一致</h3>
+<p>检查 Calico Node 资源中的 IPv4 地址：</p>
+<pre><code class="language-bash">kubectl get nodes.crd.projectcalico.org -o yaml</code></pre>
+<p>多网卡节点建议在 Operator 的 <code>Installation</code> 中配置 <code>nodeAddressAutodetectionV4</code>，按接口、CIDR 或可达目标明确选择节点地址。</p>
+<h3 id="section-22">模式切换后部分连接仍异常</h3>
+<p>先确认 IPPool 已收敛，并比较各节点路由和隧道接口。若必须滚动重启 <code>calico-node</code>，应一次处理少量节点并持续观察业务，而不是同时删除所有网络组件 Pod。</p>
+<h2 id="section-23">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://docs.tigera.io/calico/latest/getting-started/kubernetes/self-managed-onprem/onpremises" target="_blank" rel="noreferrer">Calico 官方：自建 Kubernetes 安装</a></li>
+<li class="list-depth-0"><a href="https://docs.tigera.io/calico/latest/networking/determine-best-networking" target="_blank" rel="noreferrer">Calico 官方：选择网络方案</a></li>
+<li class="list-depth-0"><a href="https://docs.tigera.io/calico/latest/networking/configuring/vxlan-ipip" target="_blank" rel="noreferrer">Calico 官方：IP-in-IP 与 VXLAN</a></li>
+<li class="list-depth-0"><a href="https://docs.tigera.io/calico/latest/reference/resources/ippool" target="_blank" rel="noreferrer">Calico 官方：IPPool 资源</a></li>
+<li class="list-depth-0"><a href="https://docs.tigera.io/calico/latest/reference/installation/api" target="_blank" rel="noreferrer">Calico 官方：Operator Installation API</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

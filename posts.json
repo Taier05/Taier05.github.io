@@ -1,5 +1,15 @@
 [
   {
+    "title": "Calico CNI 网络模式选择、部署与变更手册",
+    "slug": "calico-network-modes-deployment",
+    "category": "Kubernetes",
+    "summary": "对比 IP-in-IP、VXLAN、CrossSubnet 与无封装网络，覆盖 Operator 部署、IPPool 变更、验证和回滚。",
+    "tags": [
+      "Calico",
+      "CNI"
+    ]
+  },
+  {
     "title": "OpenVPN 多场景部署与安全运维手册",
     "slug": "openvpn-multi-scenario-operations",
     "category": "平台运维",
