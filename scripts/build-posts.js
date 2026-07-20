@@ -6,9 +6,16 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260720-batch-8';
+const assetVersion = '20260720-batch-9';
 
 const posts = [
+  {
+    sourceTitle: 'Linux 高 Load 但 CPU 空闲：D 状态风暴、SSH 卡顿与 RagFlow 故障复盘',
+    title: 'Linux 高 Load 与 D 状态风暴故障复盘',
+    slug: 'linux-high-load-d-state-ragflow-postmortem', category: 'Linux', symbol: 'D',
+    summary: '复盘一次 CPU 空闲但 Load 持续升高、SSH 登录后卡顿的故障，梳理 THP、/proc 采集和 RagFlow 依赖的故障链。',
+    tags: ['D 状态', 'THP']
+  },
   {
     sourceTitle: 'Calico CNI 网络模式详解与 Kubernetes 部署配置指南',
     title: 'Calico CNI 网络模式选择、部署与变更手册',

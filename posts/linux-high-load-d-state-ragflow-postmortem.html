@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="复盘一次 CPU 空闲但 Load 持续升高、SSH 登录后卡顿的故障，梳理 THP、/proc 采集和 RagFlow 依赖的故障链。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Linux 高 Load 与 D 状态风暴故障复盘 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260720-batch-9" />
+    <script src="/assets/js/main.js?v=20260720-batch-9" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Linux</p>
+        <h1>Linux 高 Load 与 D 状态风暴故障复盘</h1>
+        <p class="article-lead">复盘一次 CPU 空闲但 Load 持续升高、SSH 登录后卡顿的故障，梳理 THP、/proc 采集和 RagFlow 依赖的故障链。</p>
+        <div class="article-info"><span>技术手册</span><span>约 12 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-linux" aria-hidden="true">
+        <div class="article-cover-inner"><span>LINUX</span><strong>D</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">事故影响</a>
+          <a class="toc-level-2" href="#section-2">关键结论</a>
+          <a class="toc-level-3" href="#section-3">高 Load 的直接来源是 D 状态任务堆积</a>
+          <a class="toc-level-3" href="#section-4">SSH 是假性不可达</a>
+          <a class="toc-level-3" href="#section-5">THP 与 khugepaged 是高可信触发条件</a>
+          <a class="toc-level-3" href="#section-6">/proc 进程采集放大了故障</a>
+          <a class="toc-level-3" href="#section-7">RagFlow 参与故障链，但不是已证实的唯一根因</a>
+          <a class="toc-level-2" href="#section-8">重启后的第二个问题：应用依赖未恢复</a>
+          <a class="toc-level-2" href="#section-9">诊断顺序</a>
+          <a class="toc-level-3" href="#section-10">分开验证 SSH 的四个阶段</a>
+          <a class="toc-level-3" href="#section-11">避免先运行高开销的进程遍历</a>
+          <a class="toc-level-2" href="#section-12">实际恢复过程</a>
+          <a class="toc-level-3" href="#section-13">运行时关闭 THP</a>
+          <a class="toc-level-3" href="#section-14">阻止 PCP 继续创建采集任务</a>
+          <a class="toc-level-3" href="#section-15">维护重启清除存量内核等待</a>
+          <a class="toc-level-3" href="#section-16">持久禁用 THP</a>
+          <a class="toc-level-3" href="#section-17">恢复 RagFlow 依赖</a>
+          <a class="toc-level-2" href="#section-18">恢复验证</a>
+          <a class="toc-level-2" href="#section-19">根因分层</a>
+          <a class="toc-level-3" href="#section-20">已确认的直接原因</a>
+          <a class="toc-level-3" href="#section-21">高可信触发条件</a>
+          <a class="toc-level-3" href="#section-22">已确认的放大因素</a>
+          <a class="toc-level-3" href="#section-23">应用侧并发故障</a>
+          <a class="toc-level-3" href="#section-24">尚不能确认</a>
+          <a class="toc-level-2" href="#section-25">后续治理</a>
+          <a class="toc-level-3" href="#section-26">防止 THP 配置漂移</a>
+          <a class="toc-level-3" href="#section-27">降低监控放大风险</a>
+          <a class="toc-level-3" href="#section-28">修正容器恢复策略</a>
+          <a class="toc-level-2" href="#section-29">可复用处置流程</a>
+          <a class="toc-level-2" href="#section-30">结论</a>
+          <a class="toc-level-2" href="#section-31">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>本文由一次实际故障处置整理而成，主机地址、节点名、容器标识、目录、端口和账号均已移除或泛化。文中的停止监控、修改内核参数和重启操作具有业务中断风险，只能在确认数据持久化、具备控制台或带外入口并取得维护授权后执行。</p></blockquote>
+<p>一台承载 RagFlow 的 Linux 主机持续触发 Load 高告警，随后出现 SSH 登录困难、认证后命令长时间无响应等现象。分层检查确认网络和 <code>sshd</code> 并未中断，真正的问题是大量任务进入 <code>D</code>（不可中断睡眠）状态，部分常用命令在读取 <code>/proc/&lt;pid&gt;/cmdline</code> 时也被阻塞。</p>
+<p>故障链涉及 Transparent Huge Pages（THP）、<code>khugepaged</code>、业务 Python 进程的地址空间锁等待，以及 PCP/Categraf 对 <code>/proc</code> 的持续扫描。主机重启清除了存量内核等待，但应用依赖并未自动完整恢复，因此还需要分别处理主机级和应用级故障。</p>
+<h2 id="section-1">事故影响</h2>
+<ul class="article-list">
+<li class="list-depth-0">Load Average 上升到两百以上，但 CPU 仍大部分空闲。</li>
+<li class="list-depth-0">SSH 网络连接和公钥认证成功，登录后的 <code>uptime</code>、<code>ps</code>、<code>w</code>、<code>pgrep</code> 等命令可能卡住。</li>
+<li class="list-depth-0">多个进程查询和监控任务进入 D 状态，新的采集任务继续产生。</li>
+<li class="list-depth-0">RagFlow 后端持续出现 Redis 服务名解析或连接失败。</li>
+<li class="list-depth-0">页面一度返回 HTTP 200，但数据库、缓存和对象存储链路并不完整。</li>
+</ul>
+<p>未发现数据被删除或 Docker Volume 被重建的证据。恢复后数据库和对象存储健康检查通过，但这类结论仍应以业务对账、数据目录检查和应用验证为准，不能只看容器重新变为 <code>running</code>。</p>
+<h2 id="section-2">关键结论</h2>
+<h3 id="section-3">高 Load 的直接来源是 D 状态任务堆积</h3>
+<p>Load Average 不只反映正在使用 CPU 的任务，也会受到不可中断睡眠任务的影响。因此，“Load 很高、CPU idle 仍很高”并不矛盾。</p>
+<p>现场主机拥有数十个 CPU，Load 升到两百以上时 CPU 仍有九成左右空闲，同时存在大量 D 状态的 <code>ps</code>、<code>pgrep</code>、<code>pmdaproc</code> 和业务 <code>python3</code> 任务。这说明直接压力来自内核等待，而不是计算资源不足。</p>
+<h3 id="section-4">SSH 是假性不可达</h3>
+<p>现场检查结果：</p>
+<ul class="article-list">
+<li class="list-depth-0">ICMP 可达。</li>
+<li class="list-depth-0">TCP 22 端口开放。</li>
+<li class="list-depth-0">SSH 公钥认证成功。</li>
+<li class="list-depth-0"><code>sshd</code> 保持运行。</li>
+<li class="list-depth-0">卡点发生在登录后的命令执行阶段。</li>
+</ul>
+<p>因此，“无法 SSH”并不是网络中断或 SSH 服务停止，而是登录会话执行命令时被整机内核卡顿拖住。</p>
+<h3 id="section-5">THP 与 khugepaged 是高可信触发条件</h3>
+<p>现场 THP 处于：</p>
+<pre><code class="language-text">enabled: [always] madvise never</code></pre>
+<p>同时观察到：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>AnonHugePages</code> 达到数十 GiB。</li>
+<li class="list-depth-0"><code>khugepaged</code> 持续活跃。</li>
+<li class="list-depth-0">RagFlow 容器内的 Python 进程处于内存映射和写锁等待路径。</li>
+<li class="list-depth-0">内核日志出现过与相关对象释放路径有关的 Warning。</li>
+</ul>
+<p>典型内核栈包含：</p>
+<pre><code class="language-text">rwsem_down_write_slowpath
+vm_mmap_pgoff
+__x64_sys_brk</code></pre>
+<p>这些证据说明 THP 内存整理和进程地址空间锁竞争参与了本次阻塞，但仅凭一次现场不能把所有同类 D 状态问题都归因于 THP。</p>
+<h3 id="section-6"><code>/proc</code> 进程采集放大了故障</h3>
+<p>PCP、Categraf 或脚本式监控可能通过 <code>ps</code>、<code>pmdaproc</code> 等方式反复读取：</p>
+<pre><code class="language-text">/proc/&lt;pid&gt;/cmdline</code></pre>
+<p>当目标进程的地址空间已经发生锁等待时，读取任务可能继续卡在：</p>
+<pre><code class="language-text">proc_pid_cmdline_read
+__access_remote_vm</code></pre>
+<p>现场 <code>pmlogger</code> 还出现启停困难和反复拉起。最终形成放大链路：</p>
+<pre><code class="language-text">业务 Python 进程发生地址空间锁等待
+        ↓
+读取 /proc/&lt;pid&gt;/cmdline 的任务被阻塞
+        ↓
+监控继续创建新的进程扫描
+        ↓
+D 状态任务持续堆积
+        ↓
+Load 升高，登录后的命令近似不可用</code></pre>
+<h3 id="section-7">RagFlow 参与故障链，但不是已证实的唯一根因</h3>
+<p>关键 D 状态 Python 进程属于 <code>ragflow-server</code>，所以 RagFlow 工作负载确实处于故障链中。但现有证据只能支持：</p>
+<ul class="article-list">
+<li class="list-depth-0">RagFlow Python 进程是地址空间锁等待的关键对象。</li>
+<li class="list-depth-0">THP 与 <code>khugepaged</code> 提供了高风险内存整理条件。</li>
+<li class="list-depth-0"><code>/proc</code> 扫描将局部阻塞放大为整机 D 状态风暴。</li>
+<li class="list-depth-0">Redis、MySQL、MinIO 等依赖异常带来了额外重试和应用错误。</li>
+</ul>
+<p>更严谨的结论是“业务工作负载、THP 内核行为和监控采集共同形成故障链”，而不是简单认定某个应用缺陷是单一根因。</p>
+<h2 id="section-8">重启后的第二个问题：应用依赖未恢复</h2>
+<p>主机重启后 D 状态任务已经清除，但 RagFlow 仍未完整恢复。当时的容器状态表现为：</p>
+<ul class="article-list">
+<li class="list-depth-0">Server 和搜索组件运行。</li>
+<li class="list-depth-0">MySQL、MinIO、Redis 等依赖处于退出状态。</li>
+</ul>
+<p>Server 日志持续出现：</p>
+<pre><code class="language-text">Error -2 connecting to redis:6379. Name or service not known</code></pre>
+<p>Redis 容器没有运行时，容器网络中的 <code>redis</code> 服务名无法正常解析。即使页面返回 HTTP 200，也只能说明入口或前端进程可以响应，不能证明后台任务、缓存、对象存储和数据库链路健康。</p>
+<p>因此需要区分：</p>
+<ol class="article-list">
+<li class="list-depth-0"><strong>主机级故障</strong>：D 状态风暴导致 Load 高和 SSH 登录后卡顿。</li>
+<li class="list-depth-0"><strong>应用级故障</strong>：主机恢复后，RagFlow 依赖容器没有自动完整启动。</li>
+</ol>
+<h2 id="section-9">诊断顺序</h2>
+<h3 id="section-10">分开验证 SSH 的四个阶段</h3>
+<p>从另一台管理机依次检查：</p>
+<pre><code class="language-bash">ping -c 3 &lt;HOST_IP&gt;
+nc -vz -w 3 &lt;HOST_IP&gt; 22
+ssh -o BatchMode=yes -o ConnectTimeout=5 &lt;HOST_IP&gt; true
+ssh -o BatchMode=yes -o ConnectTimeout=5 &lt;HOST_IP&gt; &#39;cat /proc/loadavg&#39;</code></pre>
+<p>对应含义：</p>
+<ul class="article-list">
+<li class="list-depth-0">Ping 失败：先查网络或主机存活。</li>
+<li class="list-depth-0">TCP 22 失败：检查安全策略、监听端口和 <code>sshd</code>。</li>
+<li class="list-depth-0"><code>true</code> 失败：检查认证、PAM、Shell 和用户策略。</li>
+<li class="list-depth-0">认证成功但读取负载卡住：转向主机调度、D 状态和内核等待路径。</li>
+</ul>
+<h3 id="section-11">避免先运行高开销的进程遍历</h3>
+<p>故障期间不要一开始就执行大范围 <code>ps -ef</code>、<code>w</code>、<code>last</code> 或 <code>pmdaproc</code>。它们可能扫描大量 <code>/proc</code> 文件并卡在相同路径，进一步增加等待任务。</p>
+<p>优先读取明确 PID 的窄范围信息：</p>
+<pre><code class="language-bash">cat /proc/&lt;PID&gt;/status
+cat /proc/&lt;PID&gt;/stack
+cat /proc/loadavg
+cat /sys/kernel/mm/transparent_hugepage/enabled
+grep -E &#39;AnonHugePages|MemAvailable&#39; /proc/meminfo</code></pre>
+<p>如果 <code>ps</code> 仍可快速返回，再限制字段和结果量：</p>
+<pre><code class="language-bash">ps -eo pid,ppid,stat,comm --sort=stat | head -n 80</code></pre>
+<h2 id="section-12">实际恢复过程</h2>
+<p>以下操作根据事故处置记录整理，并未在本文发布过程中重新执行。</p>
+<h3 id="section-13">运行时关闭 THP</h3>
+<pre><code class="language-bash">echo never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+echo never &gt; /sys/kernel/mm/transparent_hugepage/defrag
+
+cat /sys/kernel/mm/transparent_hugepage/enabled
+cat /sys/kernel/mm/transparent_hugepage/defrag</code></pre>
+<p>活动值的方括号应落在 <code>never</code>：</p>
+<pre><code class="language-text">always madvise [never]</code></pre>
+<p>运行时关闭只会阻止新的 THP 分配和整理，不会拆分已经存在的所有 THP，也无法直接清除已经进入 D 状态的任务。</p>
+<h3 id="section-14">阻止 PCP 继续创建采集任务</h3>
+<p>先屏蔽相关服务和定时器，避免后续自动激活：</p>
+<pre><code class="language-bash">systemctl mask \
+  pmlogger.service \
+  pmlogger_farm.service \
+  pmlogger_check.timer \
+  pmlogger_daily.timer \
+  pmcd.service \
+  pmie.service \
+  pmproxy.service</code></pre>
+<p>对于仍可响应信号的采集进程，再尝试停止或发送终止信号：</p>
+<pre><code class="language-bash">systemctl stop pmcd.service pmie.service pmproxy.service
+systemctl kill -s SIGKILL pmlogger.service</code></pre>
+<p>如果进程本身处于 D 状态，<code>SIGKILL</code> 也不会让它立即退出。屏蔽服务的作用是阻止新任务产生，存量内核等待仍可能需要维护重启才能清除。</p>
+<p>该操作会停止 PCP 指标采集。恢复 PCP 前应先调整 proc PMDA 或其他高频 <code>/proc</code> 扫描项，并在测试环境验证采集开销。</p>
+<h3 id="section-15">维护重启清除存量内核等待</h3>
+<p>D 状态任务正在等待内核路径时，普通 <code>kill -9</code> 通常不能立即清理。业务确认维护窗口、容器数据已经持久化且具备控制台入口后，执行：</p>
+<pre><code class="language-bash">sync
+systemctl reboot</code></pre>
+<p><code>sync</code> 只能推动内核缓存写回，不能替代数据库正常关闭、存储一致性检查或业务停写。不要默认使用 <code>systemctl reboot -i</code>；<code>-i</code> 的含义是忽略关机抑制器，并不等同于“更安全”或“立即重启”。</p>
+<h3 id="section-16">持久禁用 THP</h3>
+<p>本次主机属于使用 <code>grubby</code> 管理内核参数的 RHEL 系发行版：</p>
+<pre><code class="language-bash">grubby --update-kernel=ALL --args=&quot;transparent_hugepage=never&quot;
+grubby --info=DEFAULT | egrep &#39;kernel=|args=&#39;</code></pre>
+<p>重启后同时检查：</p>
+<pre><code class="language-bash">cat /sys/kernel/mm/transparent_hugepage/enabled
+cat /proc/cmdline</code></pre>
+<p>默认内核参数中应包含：</p>
+<pre><code class="language-text">transparent_hugepage=never</code></pre>
+<p>Debian、Ubuntu 或其他发行版应采用其对应的 GRUB、systemd-boot 或内核参数管理方式，不要直接照搬 <code>grubby</code>。是否选择 <code>never</code> 也应基于应用特征和压测结果；某些工作负载可能更适合 <code>madvise</code>。</p>
+<h3 id="section-17">恢复 RagFlow 依赖</h3>
+<p>恢复过程中只启动已有容器，没有删除、重建或格式化 Docker Volume：</p>
+<pre><code class="language-bash">docker start ragflow-mysql ragflow-minio ragflow-redis
+docker restart ragflow-server</code></pre>
+<p>严禁在不清楚数据卷用途时执行：</p>
+<pre><code class="language-bash">docker compose down -v
+docker volume rm &lt;VOLUME_NAME&gt;</code></pre>
+<h2 id="section-18">恢复验证</h2>
+<p>主机级检查：</p>
+<pre><code class="language-bash">uptime
+cat /proc/loadavg
+ps -eo stat= | awk &#39;$1 ~ /^D/ {count++} END {print &quot;D_COUNT=&quot; (count+0)}&#39;
+
+cat /sys/kernel/mm/transparent_hugepage/enabled
+cat /proc/cmdline
+grubby --info=DEFAULT | egrep &#39;kernel=|args=&#39;
+
+systemctl is-active pmcd pmlogger pmie pmproxy
+systemctl is-enabled pmcd pmlogger pmie pmproxy</code></pre>
+<p>应用级检查：</p>
+<pre><code class="language-bash">docker ps --filter name=ragflow \
+  --format &#39;table {{.Names}}\t{{.Status}}&#39;
+
+docker logs --since 10m ragflow-server
+
+docker exec ragflow-server getent hosts redis
+docker exec ragflow-server getent hosts mysql
+docker exec ragflow-server getent hosts minio</code></pre>
+<p>最终确认：</p>
+<ul class="article-list">
+<li class="list-depth-0">D 状态任务归零，Load 回落并保持稳定。</li>
+<li class="list-depth-0">THP 运行态和启动参数均符合预期。</li>
+<li class="list-depth-0">PCP 相关单元处于 <code>inactive</code> 且 <code>masked</code>。</li>
+<li class="list-depth-0">RagFlow Server、搜索、数据库、对象存储和缓存组件均已运行。</li>
+<li class="list-depth-0">容器内服务名解析、目标端口和健康检查通过。</li>
+<li class="list-depth-0">Server 日志恢复正常启动与心跳，不再持续报依赖解析错误。</li>
+<li class="list-depth-0">业务页面、后台任务、文件访问和数据查询均通过验证。</li>
+</ul>
+<p>HTTP 200 只是其中一个检查点，不能单独作为应用恢复结论。</p>
+<h2 id="section-19">根因分层</h2>
+<h3 id="section-20">已确认的直接原因</h3>
+<ul class="article-list">
+<li class="list-depth-0">大量任务进入 D 状态并持续累积。</li>
+<li class="list-depth-0">D 状态任务推高 Load Average。</li>
+<li class="list-depth-0"><code>/proc/&lt;pid&gt;/cmdline</code> 读取路径出现阻塞。</li>
+<li class="list-depth-0">SSH 认证后的命令执行因此近似不可用。</li>
+</ul>
+<h3 id="section-21">高可信触发条件</h3>
+<ul class="article-list">
+<li class="list-depth-0">THP 处于 <code>always</code>。</li>
+<li class="list-depth-0">匿名透明大页使用量较高。</li>
+<li class="list-depth-0"><code>khugepaged</code> 活跃。</li>
+<li class="list-depth-0">业务 Python 进程存在 mmap/brk 和写锁等待。</li>
+</ul>
+<h3 id="section-22">已确认的放大因素</h3>
+<ul class="article-list">
+<li class="list-depth-0">PCP/Categraf 类进程采集持续扫描 <code>/proc</code>。</li>
+<li class="list-depth-0"><code>pmlogger</code> 启停异常并产生新的进程查询。</li>
+<li class="list-depth-0">新任务继续卡在相同的 <code>/proc</code> 路径。</li>
+</ul>
+<h3 id="section-23">应用侧并发故障</h3>
+<ul class="article-list">
+<li class="list-depth-0">Redis、MySQL、MinIO 等容器没有随主机完整恢复。</li>
+<li class="list-depth-0">Server 持续重试 Redis 连接。</li>
+<li class="list-depth-0">页面 HTTP 200 掩盖了后台依赖异常。</li>
+</ul>
+<h3 id="section-24">尚不能确认</h3>
+<ul class="article-list">
+<li class="list-depth-0">不能确认 RagFlow 自身缺陷是唯一根因。</li>
+<li class="list-depth-0">不能仅凭 Redis 连接失败证明其造成内核 mmap 锁等待。</li>
+<li class="list-depth-0">不能只凭 Load 高就判断 CPU、磁盘或内存容量不足。</li>
+</ul>
+<h2 id="section-25">后续治理</h2>
+<h3 id="section-26">防止 THP 配置漂移</h3>
+<ul class="article-list">
+<li class="list-depth-0">每次内核升级后检查默认启动参数。</li>
+<li class="list-depth-0">每次重启后核对 THP 运行态。</li>
+<li class="list-depth-0">将 THP、<code>AnonHugePages</code> 和 <code>khugepaged</code> 纳入主机基线巡检。</li>
+</ul>
+<h3 id="section-27">降低监控放大风险</h3>
+<ul class="article-list">
+<li class="list-depth-0">PCP 保持屏蔽，完成 proc PMDA 风险评估后再恢复。</li>
+<li class="list-depth-0">避免高频遍历全部 <code>/proc/&lt;pid&gt;/cmdline</code>。</li>
+<li class="list-depth-0">为进程采集设置超时、并发限制和失败退避。</li>
+<li class="list-depth-0">Load 告警同时关联 CPU idle、I/O wait、D 状态数量和内存大页指标。</li>
+</ul>
+<h3 id="section-28">修正容器恢复策略</h3>
+<p>先检查现有策略：</p>
+<pre><code class="language-bash">docker inspect \
+  ragflow-server ragflow-es-01 ragflow-mysql ragflow-minio ragflow-redis \
+  --format &#39;{{.Name}} restart={{.HostConfig.RestartPolicy.Name}} status={{.State.Status}}&#39;</code></pre>
+<p>Docker restart policy 可以让容器在退出或 Docker 重启后自动恢复，但它不等同于依赖已经就绪。Compose 中应为数据库、缓存和对象存储定义有效的 <code>healthcheck</code>，并让 Server 通过长语法 <code>depends_on</code> 的 <code>condition: service_healthy</code> 等待依赖健康。</p>
+<p>变更 Compose 文件前应备份当前配置并在维护窗口验证，不要为了“自动恢复”直接批量修改所有容器的 restart policy。</p>
+<h2 id="section-29">可复用处置流程</h2>
+<ol class="article-list">
+<li class="list-depth-0">分别验证网络、TCP 22、SSH 认证和登录后命令执行。</li>
+<li class="list-depth-0">对比 Load、CPU idle、I/O wait 和磁盘状态。</li>
+<li class="list-depth-0">使用窄范围 <code>/proc</code> 读取确认已知 PID 的状态和内核栈。</li>
+<li class="list-depth-0">检查 THP、<code>AnonHugePages</code> 和 <code>khugepaged</code>。</li>
+<li class="list-depth-0">确认 D 状态 PID 属于哪个容器或业务进程。</li>
+<li class="list-depth-0">检查 PCP/Categraf 是否反复扫描 <code>/proc</code>。</li>
+<li class="list-depth-0">先阻止新的采集任务产生，再安排维护重启清除存量等待。</li>
+<li class="list-depth-0">重启后分别验证主机状态和应用依赖。</li>
+<li class="list-depth-0">持久修正 THP 与监控策略，避免只恢复不治理。</li>
+<li class="list-depth-0">对 RagFlow 执行容器状态、服务解析、端口、健康检查和日志联合验证。</li>
+</ol>
+<h2 id="section-30">结论</h2>
+<p>这次“Load 很高并且无法正常 SSH”的本质不是算力不足，也不是 SSH 服务或网络故障，而是内存锁等待和 <code>/proc</code> 访问阻塞形成大量 D 状态任务，持续进程采集又进一步放大了问题。</p>
+<p>RagFlow 工作负载、THP 内核行为和监控采集共同构成了高可信故障链；重启清除了存量内核等待，随后通过持久调整 THP、屏蔽高风险采集链路、恢复 RagFlow 依赖并验证后台服务，主机和业务才真正恢复。</p>
+<h2 id="section-31">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://www.kernel.org/doc/html/v6.11/admin-guide/cpu-load.html" target="_blank" rel="noreferrer">Linux Kernel：CPU load</a></li>
+<li class="list-depth-0"><a href="https://access.redhat.com/solutions/46111" target="_blank" rel="noreferrer">Red Hat：Transparent Huge Pages 的使用与禁用</a></li>
+<li class="list-depth-0"><a href="https://docs.docker.com/engine/containers/start-containers-automatically/" target="_blank" rel="noreferrer">Docker：容器 Restart Policy</a></li>
+<li class="list-depth-0"><a href="https://docs.docker.com/compose/how-tos/startup-order/" target="_blank" rel="noreferrer">Docker Compose：控制服务启动顺序</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>
