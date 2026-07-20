@@ -120,6 +120,16 @@
     ]
   },
   {
+    "title": "MySQL 误删库恢复：延迟复制与 Binlog 实战",
+    "slug": "mysql-drop-database-delayed-replica-pitr",
+    "category": "MySQL",
+    "summary": "复盘一次误删库事故，说明如何冻结延迟副本、定位危险 GTID、恢复到误操作前并安全完成业务切换。",
+    "tags": [
+      "延迟复制",
+      "PITR"
+    ]
+  },
+  {
     "title": "Kubernetes 中部署 Nightingale 与扩展采集",
     "slug": "nightingale-kubernetes-deployment",
     "category": "可观测性",

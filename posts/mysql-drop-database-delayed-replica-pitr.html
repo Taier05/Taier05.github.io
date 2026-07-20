@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="复盘一次误删库事故，说明如何冻结延迟副本、定位危险 GTID、恢复到误操作前并安全完成业务切换。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>MySQL 误删库恢复：延迟复制与 Binlog 实战 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260720-batch-7" />
+    <script src="/assets/js/main.js?v=20260720-batch-7" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">MySQL</p>
+        <h1>MySQL 误删库恢复：延迟复制与 Binlog 实战</h1>
+        <p class="article-lead">复盘一次误删库事故，说明如何冻结延迟副本、定位危险 GTID、恢复到误操作前并安全完成业务切换。</p>
+        <div class="article-info"><span>技术手册</span><span>约 11 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-mysql" aria-hidden="true">
+        <div class="article-cover-inner"><span>MYSQL</span><strong>PITR</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">事故摘要</a>
+          <a class="toc-level-2" href="#section-2">架构与基础配置</a>
+          <a class="toc-level-2" href="#section-3">故障时间线</a>
+          <a class="toc-level-3" href="#section-4">10:35:21：误删生产库</a>
+          <a class="toc-level-3" href="#section-5">10:40：监控报警</a>
+          <a class="toc-level-3" href="#section-6">10:42：冻结延迟副本</a>
+          <a class="toc-level-3" href="#section-7">10:45：业务止写与证据保护</a>
+          <a class="toc-level-2" href="#section-8">关键认知：延迟副本不是事故前一刻</a>
+          <a class="toc-level-2" href="#section-9">定位危险事务</a>
+          <a class="toc-level-3" href="#section-10">先按时间缩小范围</a>
+          <a class="toc-level-3" href="#section-11">为什么最终使用 GTID 或事件位置</a>
+          <a class="toc-level-2" href="#section-12">推荐恢复路径：隔离延迟副本停在坏 GTID 前</a>
+          <a class="toc-level-3" href="#section-13">确认 Relay Log 已包含危险 GTID</a>
+          <a class="toc-level-3" href="#section-14">应用到危险事务之前</a>
+          <a class="toc-level-2" href="#section-15">导出误删前的完整数据</a>
+          <a class="toc-level-2" href="#section-16">备用路径：全量备份加 Binlog PITR</a>
+          <a class="toc-level-2" href="#section-17">恢复到生产环境</a>
+          <a class="toc-level-3" href="#section-18">恢复前验证</a>
+          <a class="toc-level-3" href="#section-19">切换步骤</a>
+          <a class="toc-level-2" href="#section-20">本次恢复结果</a>
+          <a class="toc-level-2" href="#section-21">根因与改进</a>
+          <a class="toc-level-3" href="#section-22">直接原因</a>
+          <a class="toc-level-3" href="#section-23">管理原因</a>
+          <a class="toc-level-3" href="#section-24">改进措施</a>
+          <a class="toc-level-2" href="#section-25">结论</a>
+          <a class="toc-level-2" href="#section-26">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>案例时间线按 2024 年环境整理，使用当时已经发布的 MySQL 8.0.36。文中的主机名、库名、GTID、Binlog 文件和位置均为示例。误操作恢复属于高风险变更，生产环境必须先冻结写入、保护原始证据，并在隔离实例完成恢复和校验后再切换业务。</p></blockquote>
+<p>本文复盘一次 <code>DROP DATABASE</code> 误操作。恢复依赖 6 小时延迟副本和 Binlog，但关键并不是“直接从延迟副本导出”：延迟副本被暂停时通常还落后数小时，必须继续应用复制事件，并精确停在危险事务之前。</p>
+<h2 id="section-1">事故摘要</h2>
+<div class="table-wrap"><table><thead><tr>
+<th>项目</th>
+<th>内容</th>
+</tr></thead><tbody>
+<tr>
+<td>事故日期</td>
+<td>2024-07-18</td>
+</tr>
+<tr>
+<td>故障级别</td>
+<td>P1，核心业务数据库不可用</td>
+</tr>
+<tr>
+<td>数据库版本</td>
+<td>MySQL 8.0.36</td>
+</tr>
+<tr>
+<td>复制方式</td>
+<td>GTID、ROW Binlog、一主多从</td>
+</tr>
+<tr>
+<td>保护措施</td>
+<td>独立 6 小时延迟副本</td>
+</tr>
+<tr>
+<td>恢复目标</td>
+<td>恢复到误删事务执行前</td>
+</tr>
+<tr>
+<td>最终 RPO</td>
+<td>经业务核对，恢复点前事务完整</td>
+</tr>
+</tbody></table></div>
+<h2 id="section-2">架构与基础配置</h2>
+<pre><code class="language-text">                         业务应用
+                            |
+                  mysql-primary.example.internal
+                            |
+             +--------------+--------------+
+             |                             |
+       普通业务副本                    延迟副本
+                                    mysql-delay.example.internal
+                                      SOURCE_DELAY=21600</code></pre>
+<p>关键配置：</p>
+<pre><code class="language-ini">server_id=101
+log_bin=binlog
+binlog_format=ROW
+gtid_mode=ON
+enforce_gtid_consistency=ON</code></pre>
+<p>延迟副本配置为延后 21600 秒执行源端事务：</p>
+<pre><code class="language-sql">STOP REPLICA SQL_THREAD;
+CHANGE REPLICATION SOURCE TO SOURCE_DELAY = 21600;
+START REPLICA SQL_THREAD;</code></pre>
+<p><code>SOURCE_DELAY</code> 从 MySQL 8.0.23 开始使用；MySQL 8.0.22 及更早版本使用旧的 <code>MASTER_DELAY</code> 语法。</p>
+<p>延迟副本还应满足：</p>
+<ul class="article-list">
+<li class="list-depth-0">不承载业务查询，不对应用开放连接。</li>
+<li class="list-depth-0">启用 <code>read_only=ON</code> 和 <code>super_read_only=ON</code>。</li>
+<li class="list-depth-0">Binlog 保留期大于“复制延迟 + 最长发现时间 + 恢复时间”。</li>
+<li class="list-depth-0">独立监控接收线程、应用线程、磁盘空间和剩余延迟。</li>
+<li class="list-depth-0">定期演练停止点恢复，而不是只确认复制线程为 <code>Yes</code>。</li>
+</ul>
+<h2 id="section-3">故障时间线</h2>
+<h3 id="section-4">10:35:21：误删生产库</h3>
+<p>维护人员原计划操作测试环境，因连接目标选择错误，在生产实例执行：</p>
+<pre><code class="language-sql">DROP DATABASE example_app;</code></pre>
+<p>应用很快出现表不存在和 HTTP 500 错误。</p>
+<h3 id="section-5">10:40：监控报警</h3>
+<p>数据库进程仍正常，CPU、内存和磁盘也没有明显异常，但目标库已经不存在。普通副本快速应用了相同 DDL，因此不能作为误操作前的数据源。</p>
+<h3 id="section-6">10:42：冻结延迟副本</h3>
+<p>第一优先级是停止延迟副本的应用线程：</p>
+<pre><code class="language-sql">STOP REPLICA SQL_THREAD;
+SHOW REPLICA STATUS\G</code></pre>
+<p>重点记录：</p>
+<pre><code class="language-text">Replica_IO_Running
+Replica_SQL_Running
+SQL_Delay
+SQL_Remaining_Delay
+Relay_Source_Log_File
+Exec_Source_Log_Pos
+Retrieved_Gtid_Set
+Executed_Gtid_Set</code></pre>
+<p>确认 <code>Replica_SQL_Running: No</code> 后，再停止接收线程，完整冻结复制状态：</p>
+<pre><code class="language-sql">STOP REPLICA IO_THREAD;</code></pre>
+<p><code>STOP REPLICA</code> 和 <code>SHOW REPLICA STATUS</code> 是非阻塞组合，不能只看到命令返回就假设线程已经完全停止；需要再次检查线程状态。</p>
+<h3 id="section-7">10:45：业务止写与证据保护</h3>
+<p>执行以下动作：</p>
+<ol class="article-list">
+<li class="list-depth-0">从入口层摘除写流量，暂停定时任务和消息消费者。</li>
+<li class="list-depth-0">禁止在原主库重新创建同名库或尝试手工补数据。</li>
+<li class="list-depth-0">保存主库与延迟副本的 <code>SHOW REPLICA STATUS\G</code>、GTID 集合和 Binlog 列表。</li>
+<li class="list-depth-0">对延迟副本创建存储快照或物理副本，后续操作只在隔离副本进行。</li>
+<li class="list-depth-0">保留原始 Binlog，不执行 <code>PURGE BINARY LOGS</code>、<code>RESET MASTER</code> 或 <code>RESET REPLICA</code>。</li>
+</ol>
+<h2 id="section-8">关键认知：延迟副本不是事故前一刻</h2>
+<p>事故在 10:35 发生，延迟副本在 10:42 被暂停，并配置了 6 小时延迟。它的数据状态大约位于 04:42，而不是 10:35。</p>
+<p>真实停止点必须以复制状态中的 <code>Executed_Gtid_Set</code>、<code>Relay_Source_Log_File</code> 和 <code>Exec_Source_Log_Pos</code> 为准。直接在此时导出，会丢失凌晨至事故前数小时的正常事务。</p>
+<p>正确恢复链路是：</p>
+<pre><code class="language-text">延迟副本当前执行点
+        |
+        | 继续应用 Relay Log / Binlog
+        v
+误删事务之前的精确停止点
+        |
+        | 一致性导出或切换
+        v
+隔离恢复实例</code></pre>
+<h2 id="section-9">定位危险事务</h2>
+<h3 id="section-10">先按时间缩小范围</h3>
+<p>时间参数只用于帮助查找，不直接作为最终恢复边界：</p>
+<pre><code class="language-bash">mysqlbinlog \
+  --base64-output=DECODE-ROWS \
+  -vv \
+  --start-datetime=&quot;2024-07-18 10:30:00&quot; \
+  --stop-datetime=&quot;2024-07-18 10:40:00&quot; \
+  /var/lib/mysql/binlog.000125 \
+  | less</code></pre>
+<p>在输出中寻找：</p>
+<pre><code class="language-text">SET @@SESSION.GTID_NEXT=&#39;aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:4567&#39;
+DROP DATABASE example_app</code></pre>
+<p>记录以下信息：</p>
+<pre><code class="language-text">BAD_GTID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:4567
+BAD_EVENT_START_POS=678900
+BAD_EVENT_END_POS=679120
+BAD_BINLOG=binlog.000125</code></pre>
+<p>真实值必须从 Binlog 输出确认，不能照抄示例。</p>
+<h3 id="section-11">为什么最终使用 GTID 或事件位置</h3>
+<p>数据库服务器、日志主机和操作终端可能存在时钟偏差。MySQL 官方建议时间参数用于定位，真正回放时优先使用事件位置。GTID 复制环境还可以使用 <code>SQL_BEFORE_GTIDS</code>，让应用线程在遇到危险事务前停止，并且不执行该事务。</p>
+<h2 id="section-12">推荐恢复路径：隔离延迟副本停在坏 GTID 前</h2>
+<p>以下命令只应在延迟副本的快照克隆或隔离副本执行。</p>
+<h3 id="section-13">确认 Relay Log 已包含危险 GTID</h3>
+<p>如果接收线程尚未取到对应事务，可只启动接收线程，不启动应用线程：</p>
+<pre><code class="language-sql">START REPLICA IO_THREAD;
+SHOW REPLICA STATUS\G</code></pre>
+<p>确认 <code>Retrieved_Gtid_Set</code> 已包含 <code>BAD_GTID</code> 后立即停止接收线程：</p>
+<pre><code class="language-sql">STOP REPLICA IO_THREAD;</code></pre>
+<h3 id="section-14">应用到危险事务之前</h3>
+<pre><code class="language-sql">START REPLICA SQL_THREAD
+  UNTIL SQL_BEFORE_GTIDS = &#39;aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:4567&#39;;</code></pre>
+<p>持续检查：</p>
+<pre><code class="language-sql">SHOW REPLICA STATUS\G</code></pre>
+<p>预期结果：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Replica_SQL_Running: No</code>。</li>
+<li class="list-depth-0"><code>Last_SQL_Errno: 0</code>，且没有新的应用线程错误。</li>
+<li class="list-depth-0"><code>Executed_Gtid_Set</code> 不包含 <code>BAD_GTID</code>。</li>
+<li class="list-depth-0"><code>example_app</code> 存在，关键表和数据时间接近 10:35:21。</li>
+</ul>
+<p><code>UNTIL</code> 条件在线程停止后可能不再保留在状态输出中，因此不要只依赖 <code>Until_Condition</code> 判断是否成功；应同时核对危险 GTID、复制错误和业务数据时间点。</p>
+<p>检查库和核心表：</p>
+<pre><code class="language-sql">SHOW DATABASES LIKE &#39;example_app&#39;;
+USE example_app;
+SHOW TABLES;
+SELECT COUNT(*) FROM critical_table;
+SELECT MAX(updated_at) FROM critical_table;</code></pre>
+<p>不要在确认停止点之前执行无条件 <code>START REPLICA</code>。否则延迟副本会继续应用 <code>DROP DATABASE</code>，唯一的保护窗口将被关闭。</p>
+<h2 id="section-15">导出误删前的完整数据</h2>
+<p>在隔离恢复副本确认一致性后导出：</p>
+<pre><code class="language-bash">mysqldump \
+  --user=&lt;BACKUP_USER&gt; \
+  --password \
+  --single-transaction \
+  --routines \
+  --events \
+  --triggers \
+  --hex-blob \
+  --set-gtid-purged=OFF \
+  --databases example_app \
+  &gt; example_app_before_drop.sql</code></pre>
+<p>计算校验值并限制文件权限：</p>
+<pre><code class="language-bash">chmod 600 example_app_before_drop.sql
+sha256sum example_app_before_drop.sql \
+  &gt; example_app_before_drop.sql.sha256</code></pre>
+<p>不要在命令行直接填写密码，避免进入 Shell 历史和进程列表。恢复文件应放在受控目录，使用完成后按数据保留策略清理。</p>
+<h2 id="section-16">备用路径：全量备份加 Binlog PITR</h2>
+<p>如果延迟副本不可用，可在隔离实例恢复最近一次全量备份，再从备份记录的 Binlog 坐标逐文件回放到危险事件开始位置。</p>
+<p>用于实际回放的输出不要带 <code>--base64-output=DECODE-ROWS -vv</code>。这些选项适合阅读 ROW 事件；执行时应保留 <code>mysqlbinlog</code> 产生的 <code>BINLOG</code> 语句。</p>
+<p>示例：</p>
+<pre><code class="language-bash"># 第一个文件：从备份坐标开始
+mysqlbinlog \
+  --start-position=123456 \
+  /recovery/binlog.000123 \
+  | mysql --binary-mode=1 --user=&lt;RECOVERY_USER&gt; --password
+
+# 中间文件：完整应用
+mysqlbinlog \
+  /recovery/binlog.000124 \
+  | mysql --binary-mode=1 --user=&lt;RECOVERY_USER&gt; --password
+
+# 最后一个文件：在 DROP 事件开始位置之前停止
+mysqlbinlog \
+  --stop-position=678900 \
+  /recovery/binlog.000125 \
+  | mysql --binary-mode=1 --user=&lt;RECOVERY_USER&gt; --password</code></pre>
+<p>必须保证：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>123456</code> 是全量备份已经包含的最后位置之后的正确起点。</li>
+<li class="list-depth-0"><code>678900</code> 是危险事务的开始位置，而不是结束位置。</li>
+<li class="list-depth-0">Binlog 文件连续、无缺口，并按照文件顺序回放。</li>
+<li class="list-depth-0">回放目标是隔离实例，不是仍在承载请求的生产主库。</li>
+</ul>
+<h2 id="section-17">恢复到生产环境</h2>
+<p>推荐在隔离实例完成验证后切换，而不是直接在原主库边恢复边开放写入。</p>
+<h3 id="section-18">恢复前验证</h3>
+<p>至少核对：</p>
+<ul class="article-list">
+<li class="list-depth-0">Schema、表、视图、触发器、存储过程和事件是否完整。</li>
+<li class="list-depth-0">核心表总行数、时间范围、金额汇总和业务状态分布。</li>
+<li class="list-depth-0">关键外键或逻辑关联是否一致。</li>
+<li class="list-depth-0">随机抽样订单、用户和流水是否可被应用正确读取。</li>
+<li class="list-depth-0">应用使用的数据库账号权限是否仍正确。</li>
+<li class="list-depth-0">危险 GTID 或 <code>DROP DATABASE</code> 没有进入恢复实例。</li>
+</ul>
+<p>示例检查：</p>
+<pre><code class="language-sql">SELECT COUNT(*) FROM example_app.critical_table;
+SELECT MIN(created_at), MAX(created_at)
+FROM example_app.critical_table;
+
+CHECKSUM TABLE example_app.critical_table;</code></pre>
+<p>大表执行 <code>CHECKSUM TABLE</code> 可能耗时并增加 I/O，生产环境应根据表规模选择抽样、分块校验或业务汇总对账。</p>
+<h3 id="section-19">切换步骤</h3>
+<ol class="article-list">
+<li class="list-depth-0">确认业务仍处于止写状态。</li>
+<li class="list-depth-0">对恢复实例执行最终业务验收。</li>
+<li class="list-depth-0">修改数据库入口，将业务指向恢复实例或受控恢复后的主库。</li>
+<li class="list-depth-0">小流量验证查询、写入、事务和消息消费。</li>
+<li class="list-depth-0">逐步恢复全部流量并持续观察错误率和数据指标。</li>
+<li class="list-depth-0">重建普通副本和新的延迟副本。</li>
+</ol>
+<p>不要简单对原延迟副本执行 <code>START REPLICA</code> 后继续复用，因为它仍会遇到危险 GTID。事故恢复后应从新的可信主库重新建立复制链路。</p>
+<h2 id="section-20">本次恢复结果</h2>
+<p>案例时间线：</p>
+<div class="table-wrap"><table><thead><tr>
+<th>时间</th>
+<th>动作</th>
+</tr></thead><tbody>
+<tr>
+<td>10:35:21</td>
+<td>误执行 <code>DROP DATABASE</code></td>
+</tr>
+<tr>
+<td>10:40</td>
+<td>业务监控报警</td>
+</tr>
+<tr>
+<td>10:42</td>
+<td>延迟副本停止应用线程</td>
+</tr>
+<tr>
+<td>10:45</td>
+<td>业务止写并保护 Binlog</td>
+</tr>
+<tr>
+<td>11:02</td>
+<td>定位危险 GTID 与事件位置</td>
+</tr>
+<tr>
+<td>11:18</td>
+<td>隔离副本停在危险 GTID 前</td>
+</tr>
+<tr>
+<td>11:35</td>
+<td>完成一致性导出</td>
+</tr>
+<tr>
+<td>12:20</td>
+<td>完成恢复与业务校验</td>
+</tr>
+<tr>
+<td>12:40</td>
+<td>小流量验证后恢复业务</td>
+</tr>
+</tbody></table></div>
+<p>最终结果：</p>
+<div class="table-wrap"><table><thead><tr>
+<th>项目</th>
+<th>结果</th>
+</tr></thead><tbody>
+<tr>
+<td>恢复点</td>
+<td>2024-07-18 10:35:21 之前</td>
+</tr>
+<tr>
+<td>误删事务</td>
+<td>未在恢复实例执行</td>
+</tr>
+<tr>
+<td>恢复点前数据</td>
+<td>GTID、行数及业务对账通过</td>
+</tr>
+<tr>
+<td>业务恢复</td>
+<td>完成</td>
+</tr>
+<tr>
+<td>普通副本</td>
+<td>从可信主库重新建立</td>
+</tr>
+<tr>
+<td>延迟副本</td>
+<td>重建并重新配置 6 小时延迟</td>
+</tr>
+</tbody></table></div>
+<p>“数据无丢失”必须以业务对账和恢复目标为准，不能只根据复制线程正常或 SQL 导入成功得出结论。</p>
+<h2 id="section-21">根因与改进</h2>
+<h3 id="section-22">直接原因</h3>
+<p>维护人员选错数据库连接，并使用拥有 <code>DROP</code> 权限的账号执行危险 DDL。</p>
+<h3 id="section-23">管理原因</h3>
+<ul class="article-list">
+<li class="list-depth-0">测试和生产连接标识不够醒目。</li>
+<li class="list-depth-0">人员账号权限过大，没有按任务临时授权。</li>
+<li class="list-depth-0">危险 DDL 缺少审批和双人复核。</li>
+<li class="list-depth-0">恢复体系存在，但演练和操作手册不够精确。</li>
+</ul>
+<h3 id="section-24">改进措施</h3>
+<ol class="article-list">
+<li class="list-depth-0">应用账号仅保留业务必需的 <code>SELECT</code>、<code>INSERT</code>、<code>UPDATE</code>、<code>DELETE</code> 等权限，不授予 <code>DROP</code>。</li>
+<li class="list-depth-0">人员操作使用独立实名账号，通过堡垒机、工单和限时授权进入生产。</li>
+<li class="list-depth-0"><code>DROP</code>、<code>TRUNCATE</code>、无条件大范围 <code>DELETE/UPDATE</code> 必须经过审核。</li>
+<li class="list-depth-0">延迟副本与业务网络隔离，避免被普通连接误用。</li>
+<li class="list-depth-0">Binlog 保留周期覆盖最坏发现和恢复窗口，并持续备份到独立存储。</li>
+<li class="list-depth-0">定期执行“备份恢复 + Binlog PITR + 延迟副本停止点”联合演练。</li>
+<li class="list-depth-0">恢复手册中明确记录 GTID、文件位置、停止边界和回滚入口。</li>
+</ol>
+<h2 id="section-25">结论</h2>
+<p>普通复制解决的是副本和可用性问题，无法阻止错误 SQL 被同步放大。延迟副本提供了时间缓冲，但它只是恢复链路的起点；真正可靠的恢复依赖精确停止点、连续 Binlog、隔离恢复、业务对账和可验证的切换流程。</p>
+<h2 id="section-26">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-36.html" target="_blank" rel="noreferrer">MySQL 8.0.36 发布说明（2024-01-16）</a></li>
+<li class="list-depth-0"><a href="https://dev.mysql.com/doc/refman/8.0/en/replication-delayed.html" target="_blank" rel="noreferrer">MySQL 8.0：延迟复制</a></li>
+<li class="list-depth-0"><a href="https://dev.mysql.com/doc/refman/8.0/en/start-replica.html" target="_blank" rel="noreferrer">MySQL 8.0：START REPLICA 与 SQL_BEFORE_GTIDS</a></li>
+<li class="list-depth-0"><a href="https://dev.mysql.com/doc/refman/8.0/en/point-in-time-recovery-positions.html" target="_blank" rel="noreferrer">MySQL 8.0：基于事件位置的时间点恢复</a></li>
+<li class="list-depth-0"><a href="https://dev.mysql.com/doc/refman/8.0/en/mysqlbinlog.html" target="_blank" rel="noreferrer">MySQL 8.0：mysqlbinlog 工具</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>

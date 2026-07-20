@@ -6,7 +6,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260716-batch-6';
+const assetVersion = '20260720-batch-7';
 
 const posts = [
   {
@@ -92,6 +92,13 @@ const posts = [
     slug: 'mysql-backup-restore', category: 'MySQL', symbol: 'BAK',
     summary: '对比 mysqldump 与 Percona XtraBackup，整理全量、增量备份、恢复链合并和恢复验证流程。',
     tags: ['备份', 'XtraBackup']
+  },
+  {
+    sourceTitle: '一次 MySQL 生产库误删除事故恢复实战：延迟从库 + Binlog 实现数据找回',
+    title: 'MySQL 误删库恢复：延迟复制与 Binlog 实战',
+    slug: 'mysql-drop-database-delayed-replica-pitr', category: 'MySQL', symbol: 'PITR',
+    summary: '复盘一次误删库事故，说明如何冻结延迟副本、定位危险 GTID、恢复到误操作前并安全完成业务切换。',
+    tags: ['延迟复制', 'PITR']
   },
   {
     sourceTitle: 'Nightingale 监控平台部署与扩展采集手册',
