@@ -6,9 +6,23 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260720-batch-9';
+const assetVersion = '20260720-batch-10';
 
 const posts = [
+  {
+    sourceTitle: 'BMC重置密码',
+    title: '服务器 BMC 密码重置与固件升级安全手册',
+    slug: 'bmc-password-reset-firmware-upgrade', category: '平台运维', symbol: 'BMC',
+    summary: '整理 ipmitool 与 IPMICFG 的安全重置流程，并覆盖 ESXi 临时执行、固件升级、验证和回退注意事项。',
+    tags: ['BMC', '固件升级']
+  },
+  {
+    sourceTitle: 'Linux服务器病毒扫描与KVRT使用说明',
+    title: 'Linux 服务器恶意软件应急扫描：KVRT 使用手册',
+    slug: 'linux-kvrt-malware-scan', category: 'Linux', symbol: 'AV',
+    summary: '使用 KVRT 对 Linux 服务器执行受控恶意软件扫描，说明只检测策略、报告保护、资源控制与扫描后复核。',
+    tags: ['KVRT', '应急响应']
+  },
   {
     sourceTitle: 'Linux 高 Load 但 CPU 空闲：D 状态风暴、SSH 卡顿与 RagFlow 故障复盘',
     title: 'Linux 高 Load 与 D 状态风暴故障复盘',

@@ -1,5 +1,25 @@
 [
   {
+    "title": "服务器 BMC 密码重置与固件升级安全手册",
+    "slug": "bmc-password-reset-firmware-upgrade",
+    "category": "平台运维",
+    "summary": "整理 ipmitool 与 IPMICFG 的安全重置流程，并覆盖 ESXi 临时执行、固件升级、验证和回退注意事项。",
+    "tags": [
+      "BMC",
+      "固件升级"
+    ]
+  },
+  {
+    "title": "Linux 服务器恶意软件应急扫描：KVRT 使用手册",
+    "slug": "linux-kvrt-malware-scan",
+    "category": "Linux",
+    "summary": "使用 KVRT 对 Linux 服务器执行受控恶意软件扫描，说明只检测策略、报告保护、资源控制与扫描后复核。",
+    "tags": [
+      "KVRT",
+      "应急响应"
+    ]
+  },
+  {
     "title": "Linux 高 Load 与 D 状态风暴故障复盘",
     "slug": "linux-high-load-d-state-ragflow-postmortem",
     "category": "Linux",
