@@ -1,6 +1,6 @@
 # MySQL 误删库恢复：延迟复制与 Binlog 实战
 
-> 案例时间线按 2024 年环境整理，使用当时已经发布的 MySQL 8.0.36。文中的主机名、库名、GTID、Binlog 文件和位置均为示例。误操作恢复属于高风险变更，生产环境必须先冻结写入、保护原始证据，并在隔离实例完成恢复和校验后再切换业务。
+> 本文以 MySQL 8.0.36 环境为例。文中的主机名、库名、GTID、Binlog 文件和位置均为示例。误操作恢复属于高风险变更，生产环境必须先冻结写入、保护原始证据，并在隔离实例完成恢复和校验后再切换业务。
 
 本文复盘一次 `DROP DATABASE` 误操作。恢复依赖 6 小时延迟副本和 Binlog，但关键并不是“直接从延迟副本导出”：延迟副本被暂停时通常还落后数小时，必须继续应用复制事件，并精确停在危险事务之前。
 
@@ -8,7 +8,6 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 事故日期 | 2024-07-18 |
 | 故障级别 | P1，核心业务数据库不可用 |
 | 数据库版本 | MySQL 8.0.36 |
 | 复制方式 | GTID、ROW Binlog、一主多从 |
@@ -144,8 +143,8 @@ STOP REPLICA IO_THREAD;
 mysqlbinlog \
   --base64-output=DECODE-ROWS \
   -vv \
-  --start-datetime="2024-07-18 10:30:00" \
-  --stop-datetime="2024-07-18 10:40:00" \
+  --start-datetime="<INCIDENT_DATE> <WINDOW_START_TIME>" \
+  --stop-datetime="<INCIDENT_DATE> <WINDOW_END_TIME>" \
   /var/lib/mysql/binlog.000125 \
   | less
 ```
@@ -327,7 +326,7 @@ CHECKSUM TABLE example_app.critical_table;
 
 ## 本次恢复结果
 
-案例时间线：
+恢复时间线：
 
 | 时间 | 动作 |
 | --- | --- |
@@ -345,7 +344,7 @@ CHECKSUM TABLE example_app.critical_table;
 
 | 项目 | 结果 |
 | --- | --- |
-| 恢复点 | 2024-07-18 10:35:21 之前 |
+| 恢复点 | 误删事务执行前 |
 | 误删事务 | 未在恢复实例执行 |
 | 恢复点前数据 | GTID、行数及业务对账通过 |
 | 业务恢复 | 完成 |
@@ -383,7 +382,7 @@ CHECKSUM TABLE example_app.critical_table;
 
 ## 参考资料
 
-- [MySQL 8.0.36 发布说明（2024-01-16）](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-36.html)
+- [MySQL 8.0.36 发布说明](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-36.html)
 - [MySQL 8.0：延迟复制](https://dev.mysql.com/doc/refman/8.0/en/replication-delayed.html)
 - [MySQL 8.0：START REPLICA 与 SQL_BEFORE_GTIDS](https://dev.mysql.com/doc/refman/8.0/en/start-replica.html)
 - [MySQL 8.0：基于事件位置的时间点恢复](https://dev.mysql.com/doc/refman/8.0/en/point-in-time-recovery-positions.html)
