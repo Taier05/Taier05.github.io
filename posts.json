@@ -1,5 +1,15 @@
 [
   {
+    "title": "Anolis OS 8.10 启动失败：EXT4 修复与硬件排查",
+    "slug": "anolisos-8-10-ext4-boot-recovery",
+    "category": "Linux",
+    "summary": "从 dracut emergency mode 和 fsck 失败入手，梳理 EXT4 受控修复、复发判断以及 NVMe、内存与 PCIe 排查流程。",
+    "tags": [
+      "EXT4",
+      "启动修复"
+    ]
+  },
+  {
     "title": "Calico CNI 网络模式选择、部署与变更手册",
     "slug": "calico-network-modes-deployment",
     "category": "Kubernetes",

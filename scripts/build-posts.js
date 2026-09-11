@@ -6,9 +6,17 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260728-order-1';
+const assetVersion = '20260911-anolis-1';
 
+// 默认发布规则：除非另有排序要求，新同步的文章插入列表第一位。
 const posts = [
+  {
+    sourceTitle: 'Anolis OS 8.10 启动故障修复排障记录',
+    title: 'Anolis OS 8.10 启动失败：EXT4 修复与硬件排查',
+    slug: 'anolisos-8-10-ext4-boot-recovery', category: 'Linux', symbol: 'FS',
+    summary: '从 dracut emergency mode 和 fsck 失败入手，梳理 EXT4 受控修复、复发判断以及 NVMe、内存与 PCIe 排查流程。',
+    tags: ['EXT4', '启动修复']
+  },
   {
     sourceTitle: 'Calico CNI 网络模式详解与 Kubernetes 部署配置指南',
     title: 'Calico CNI 网络模式选择、部署与变更手册',

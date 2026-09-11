@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="从 dracut emergency mode 和 fsck 失败入手，梳理 EXT4 受控修复、复发判断以及 NVMe、内存与 PCIe 排查流程。" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Anolis OS 8.10 启动失败：EXT4 修复与硬件排查 | Yalex 的技术笔记</title>
+    <link rel="stylesheet" href="/assets/css/main.css?v=20260911-anolis-1" />
+    <script src="/assets/js/main.js?v=20260911-anolis-1" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#article">跳到正文</a>
+    <header class="site-header">
+      <div class="shell nav-wrap">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">Y</span>
+          <span><strong>Yalex</strong><small>技术笔记</small></span>
+        </a>
+        <nav class="site-nav" aria-label="主导航">
+          <a href="/#articles">文章</a><a href="/#topics">专题</a><a href="/#about">关于</a>
+          <a href="https://github.com/Taier05" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon" aria-hidden="true">◐</span></button>
+      </div>
+    </header>
+
+    <main id="article">
+      <header class="article-header">
+        <a class="breadcrumb" href="/"><span aria-hidden="true">←</span> 返回文章列表</a>
+        <p class="article-category">Linux</p>
+        <h1>Anolis OS 8.10 启动失败：EXT4 修复与硬件排查</h1>
+        <p class="article-lead">从 dracut emergency mode 和 fsck 失败入手，梳理 EXT4 受控修复、复发判断以及 NVMe、内存与 PCIe 排查流程。</p>
+        <div class="article-info"><span>技术手册</span><span>约 11 分钟阅读</span><span>持续更新</span></div>
+      </header>
+
+      <div class="article-cover cover-linux" aria-hidden="true">
+        <div class="article-cover-inner"><span>LINUX</span><strong>FS</strong><p>Yalex / Technical Notes</p></div>
+      </div>
+
+      <div class="article-layout">
+        <aside class="article-toc" aria-label="文章目录"><strong>本文目录</strong>
+          <a class="toc-level-2" href="#section-1">故障现象</a>
+          <a class="toc-level-2" href="#section-2">处理原则</a>
+          <a class="toc-level-2" href="#section-3">确认根设备和文件系统类型</a>
+          <a class="toc-level-2" href="#section-4">确认文件系统没有挂载</a>
+          <a class="toc-level-2" href="#section-5">修复前保留证据</a>
+          <a class="toc-level-2" href="#section-6">先进行只读检查</a>
+          <a class="toc-level-2" href="#section-7">执行受控修复</a>
+          <a class="toc-level-2" href="#section-8">从 GRUB 进入 pre-mount 环境</a>
+          <a class="toc-level-2" href="#section-9">修复后的静态验证</a>
+          <a class="toc-level-2" href="#section-10">文件系统再次损坏时停止反复修复</a>
+          <a class="toc-level-2" href="#section-11">检查 NVMe、PCIe 和内核日志</a>
+          <a class="toc-level-2" href="#section-12">检查内存和平台稳定性</a>
+          <a class="toc-level-2" href="#section-13">文件系统正常后排查 systemd 和图形界面</a>
+          <a class="toc-level-2" href="#section-14">推荐处置流程</a>
+          <a class="toc-level-2" href="#section-15">关键结论</a>
+          <a class="toc-level-2" href="#section-16">参考资料</a></aside>
+        <article class="article-body">
+          <div class="callout article-safety"><strong>安全说明</strong><p>文中的地址、域名、账户和凭证均为示例或已脱敏，请按实际环境替换后再执行。</p></div>
+<blockquote><p>本文由一次实际启动故障处置整理而成，磁盘路径、UUID、PCI 地址和业务服务名均已泛化。文件系统修复会写入磁盘，误选设备或在文件系统已挂载时操作可能造成进一步损坏。生产环境应先确认备份、维护窗口和控制台入口；疑似硬件故障时，优先保护数据并在副本上分析。</p></blockquote>
+<p>一台安装 Anolis OS 8.10 的服务器启动后进入 dracut emergency shell，根文件系统检查失败。首次修复 EXT4 元数据后系统一度恢复，但重启又出现 block group descriptor checksum 和 inode bitmap 错误。这意味着排障不能停留在“反复执行 fsck”：需要区分文件系统的直接故障、修复后的系统文件问题，以及可能持续破坏数据的存储、内存、PCIe、供电或软件因素。</p>
+<h2 id="section-1">故障现象</h2>
+<p>启动阶段出现类似信息：</p>
+<pre><code class="language-text">Entering emergency mode.
+Generating &quot;/run/initramfs/rdsosreport.txt&quot;</code></pre>
+<p>随后看到根分区检查失败：</p>
+<pre><code class="language-text">&lt;ROOT_DEVICE&gt; contains a file system with errors, check forced.
+fsck failed with exit status 4.
+Failed to start File System Check on &lt;ROOT_DEVICE&gt;.
+Dependency failed for /sysroot.</code></pre>
+<p><code>e2fsck</code> 返回码 <code>4</code> 表示仍有文件系统错误未修复。结合根设备无法挂载，可以判断本次无法进入系统的直接原因是 EXT4 元数据不一致。</p>
+<p>现场还可能同时出现 systemd generator 或应用服务配置错误，例如：</p>
+<pre><code class="language-text">/usr/lib/systemd/system-generators/&lt;GENERATOR&gt; failed with exit status 127
+&lt;APPLICATION_SERVICE&gt;.service: Invalid URL</code></pre>
+<p>这些错误需要在文件系统恢复后继续检查，但不能仅凭出现顺序就把它们判定为第一次启动失败的根因。文件损坏本身也可能导致二进制、动态库或配置内容异常。</p>
+<h2 id="section-2">处理原则</h2>
+<p>整个恢复过程遵循四条原则：</p>
+<ol class="article-list">
+<li class="list-depth-0">先确认设备和文件系统类型，不能凭记忆套用分区名。</li>
+<li class="list-depth-0">文件系统必须处于未挂载状态，才执行有效且安全的检查或修复。</li>
+<li class="list-depth-0">先只读评估并尽量保留元数据证据，再执行写入式修复。</li>
+<li class="list-depth-0">修复后若很快再次损坏，停止反复 <code>fsck</code>，转向硬件与写入链路排查。</li>
+</ol>
+<h2 id="section-3">确认根设备和文件系统类型</h2>
+<p>在 initramfs 或救援环境中执行：</p>
+<pre><code class="language-bash">lsblk -o NAME,TYPE,FSTYPE,FSVER,SIZE,MOUNTPOINTS,UUID
+blkid
+cat /proc/cmdline</code></pre>
+<p>重点核对内核参数中的：</p>
+<pre><code class="language-text">root=UUID=&lt;ROOT_UUID&gt;</code></pre>
+<p>解析 UUID 对应的真实设备：</p>
+<pre><code class="language-bash">readlink -f /dev/disk/by-uuid/REPLACE_WITH_ROOT_UUID</code></pre>
+<p>后续示例统一使用变量，实际执行时必须替换为核对后的路径：</p>
+<pre><code class="language-bash">ROOT_DEVICE=&#39;/dev/disk/by-uuid/REPLACE_WITH_ROOT_UUID&#39;</code></pre>
+<p>如果根文件系统位于 LUKS、LVM、MD RAID 或其他设备映射之上，应对承载 EXT4 的逻辑设备执行检查，例如 <code>/dev/mapper/REPLACE_WITH_ROOT_LV</code>，不能直接对底层 PV、RAID 成员盘或加密容器运行 <code>e2fsck</code>。</p>
+<p>还要先确认文件系统确实是 EXT2、EXT3 或 EXT4：</p>
+<pre><code class="language-bash">blkid &quot;$ROOT_DEVICE&quot;</code></pre>
+<p>如果实际为 XFS，应使用 XFS 对应的检查与恢复流程，不能运行 <code>e2fsck</code>。</p>
+<h2 id="section-4">确认文件系统没有挂载</h2>
+<p>检查设备和常见的系统根挂载点：</p>
+<pre><code class="language-bash">findmnt --source &quot;$ROOT_DEVICE&quot;
+findmnt /sysroot
+findmnt /mnt/sysroot
+lsblk -o NAME,FSTYPE,MOUNTPOINTS</code></pre>
+<p>发现目标文件系统已挂载时，应先退出使用该挂载点的进程并安全卸载。不要把“命令没有输出”当作唯一依据，要同时核对 <code>findmnt</code> 和 <code>lsblk</code>。</p>
+<p><code>e2fsck</code> 官方手册明确说明，通常不能在已挂载文件系统上运行。即使使用 <code>-n</code> 不写入，挂载期间得到的检查结果也可能无效。</p>
+<h2 id="section-5">修复前保留证据</h2>
+<p>如果存在另一块健康磁盘、外接介质或已确认可写的网络位置，可以先保存 EXT4 元数据镜像：</p>
+<pre><code class="language-bash">mkdir -p /mnt/recovery
+e2image -Q &quot;$ROOT_DEVICE&quot; /mnt/recovery/root-before-repair.e2i
+sha256sum /mnt/recovery/root-before-repair.e2i</code></pre>
+<p><code>/mnt/recovery</code> 必须位于其他健康文件系统，不能放在正在修复的根文件系统中。元数据镜像可能包含目录名、文件名和其他环境信息，应限制访问权限并按敏感证据保存。</p>
+<p>如果读取设备时持续出现 I/O error、timeout、controller reset，或设备反复离线，不要继续在原盘上写入式修复。此时应优先制作可恢复副本或联系存储、硬件支持人员。</p>
+<h2 id="section-6">先进行只读检查</h2>
+<p>确认设备正确且未挂载后执行：</p>
+<pre><code class="language-bash">e2fsck -f -n &quot;$ROOT_DEVICE&quot;
+check_rc=$?
+printf &#39;e2fsck read-only exit code: %s\n&#39; &quot;$check_rc&quot;</code></pre>
+<p>参数含义：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>-f</code>：即使文件系统看起来 clean，也执行完整检查。</li>
+<li class="list-depth-0"><code>-n</code>：所有修复问题都回答 no，不写入文件系统。</li>
+</ul>
+<p>只读检查的后续阶段可能报告一些在真正修复时会被前序阶段消除的问题，因此不要仅按报错条数估算损坏程度。需要结合错误类型、设备日志和备份情况制定修复方案。</p>
+<h2 id="section-7">执行受控修复</h2>
+<p>优先使用预自动修复模式：</p>
+<pre><code class="language-bash">e2fsck -p &quot;$ROOT_DEVICE&quot;
+repair_rc=$?
+printf &#39;e2fsck repair exit code: %s\n&#39; &quot;$repair_rc&quot;</code></pre>
+<p><code>-p</code> 只自动处理可以安全修复的问题；遇到需要管理员判断的损坏时会停止，并通过输出和返回码提示。相比对所有问题一律回答 yes 的 <code>-y</code>，它更适合作为生产恢复的第一步。</p>
+<p>常见返回码如下：</p>
+<div class="table-wrap"><table><thead><tr>
+<th>返回码</th>
+<th>含义</th>
+</tr></thead><tbody>
+<tr>
+<td><code>0</code></td>
+<td>没有错误</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>文件系统错误已修复</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>错误已修复，系统应重启</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>仍有文件系统错误未修复</td>
+</tr>
+<tr>
+<td><code>8</code></td>
+<td>工具或设备操作错误</td>
+</tr>
+<tr>
+<td><code>16</code></td>
+<td>用法或参数错误</td>
+</tr>
+<tr>
+<td><code>32</code></td>
+<td>检查被用户取消</td>
+</tr>
+<tr>
+<td><code>128</code></td>
+<td>共享库错误</td>
+</tr>
+</tbody></table></div>
+<p>返回码可能是多个条件之和，判断时应同时阅读完整输出。<code>1</code> 或 <code>2</code> 不等于修复失败；<code>4</code> 或包含 <code>4</code> 的组合值表示仍有未解决的文件系统问题。</p>
+<p>如果 <code>-p</code> 要求人工处理，应先保存完整输出，由熟悉 EXT4 和业务数据的人员评估，再使用交互模式：</p>
+<pre><code class="language-bash">e2fsck -f &quot;$ROOT_DEVICE&quot;</code></pre>
+<p>不要把以下命令作为默认操作：</p>
+<pre><code class="language-bash">e2fsck -f -y &quot;$ROOT_DEVICE&quot;</code></pre>
+<p><code>-y</code> 会对所有修复问题自动回答 yes。只有在设备已核对、证据和备份已保留、接受潜在数据丢失，并经过明确变更授权时才考虑使用。</p>
+<h2 id="section-8">从 GRUB 进入 pre-mount 环境</h2>
+<p>系统没有自动进入 emergency shell 时，可以在 GRUB 中手工设置断点：</p>
+<ol class="article-list">
+<li class="list-depth-0">在启动菜单选中目标内核并按 <code>e</code>。</li>
+<li class="list-depth-0">找到以 <code>linux</code> 或 <code>linuxefi</code> 开头的内核参数行。</li>
+<li class="list-depth-0">在行尾追加：</li>
+</ol>
+<pre><code class="language-text">rd.break=pre-mount</code></pre>
+<ol class="article-list">
+<li class="list-depth-0">按 <code>Ctrl</code>+<code>x</code> 启动。</li>
+</ol>
+<p><code>rd.break=pre-mount</code> 是 dracut 支持的断点，会在根文件系统挂载阶段前进入 shell。不同磁盘栈和 initramfs 内容可能导致设备尚未组装，或者没有包含 <code>e2fsck</code>。遇到这种情况，应使用 Anolis OS 安装介质的 Rescue 环境，并重新核对 LUKS、LVM 或 RAID 映射。</p>
+<p>进入 shell 后重复以下检查，不能因为使用了 pre-mount 就省略：</p>
+<pre><code class="language-bash">lsblk -o NAME,TYPE,FSTYPE,MOUNTPOINTS,UUID
+findmnt /sysroot
+findmnt /mnt/sysroot</code></pre>
+<h2 id="section-9">修复后的静态验证</h2>
+<p>修复完成后再次进行只读完整检查：</p>
+<pre><code class="language-bash">e2fsck -f -n &quot;$ROOT_DEVICE&quot;
+verify_rc=$?
+printf &#39;e2fsck verification exit code: %s\n&#39; &quot;$verify_rc&quot;</code></pre>
+<p>理想结果是返回 <code>0</code>，且输出不再包含未修复错误。如果返回 <code>1</code>、<code>2</code> 或 <code>4</code>，要重新阅读输出，不要只看最后一句。</p>
+<p><code>e2fsck</code> 只能验证和修复文件系统元数据一致性，不能证明每个业务文件内容正确，也不是数据恢复工具。系统能够启动后还需要校验关键软件包、配置、数据库和业务数据。</p>
+<h2 id="section-10">文件系统再次损坏时停止反复修复</h2>
+<p>如果出现以下链路，应把它视为持续性风险：</p>
+<pre><code class="language-text">修复后只读检查返回 0
+        ↓
+重新启动或短时间运行
+        ↓
+再次出现 descriptor checksum、bitmap 或 metadata 错误</code></pre>
+<p>可能原因包括但不限于：</p>
+<ul class="article-list">
+<li class="list-depth-0">NVMe 介质、控制器或固件异常。</li>
+<li class="list-depth-0">PCIe 链路出现 AER、reset、timeout 或掉盘。</li>
+<li class="list-depth-0">内存错误导致待写入的数据或元数据被破坏。</li>
+<li class="list-depth-0">供电、主板或散热不稳定。</li>
+<li class="list-depth-0">内核、驱动或存储软件缺陷。</li>
+<li class="list-depth-0">不正常断电、强制复位或其他非预期写入中断。</li>
+</ul>
+<p>一次 <code>e2fsck</code> clean 或一份 SMART 正常报告都不能单独排除这些问题。继续反复写入原盘可能覆盖恢复线索或扩大数据损失，应先保护数据、降低写入并收集证据。</p>
+<h2 id="section-11">检查 NVMe、PCIe 和内核日志</h2>
+<p>在当前启动环境检查内核信息：</p>
+<pre><code class="language-bash">dmesg -T | grep -iE &#39;nvme|pcie|aer|i/o error|timeout|reset|abort|corrupt|ext4-fs error&#39;</code></pre>
+<p>系统恢复后，如果持久化日志可用，还应检查上一次启动：</p>
+<pre><code class="language-bash">journalctl -k -b -1 --no-pager \
+  | grep -iE &#39;nvme|pcie|aer|i/o error|timeout|reset|abort|corrupt|ext4-fs error&#39;</code></pre>
+<p>查看 NVMe 健康与错误日志：</p>
+<pre><code class="language-bash">smartctl -x /dev/nvme0
+nvme smart-log /dev/nvme0
+nvme error-log /dev/nvme0</code></pre>
+<p>重点关注：</p>
+<ul class="article-list">
+<li class="list-depth-0"><code>Critical Warning</code></li>
+<li class="list-depth-0"><code>Available Spare</code></li>
+<li class="list-depth-0"><code>Percentage Used</code></li>
+<li class="list-depth-0"><code>Media and Data Integrity Errors</code></li>
+<li class="list-depth-0"><code>Error Information Log Entries</code></li>
+<li class="list-depth-0">控制器 reset、timeout、AER 和 I/O error</li>
+</ul>
+<p>设备路径应以 <code>lsblk</code>、<code>nvme list</code> 和实际控制器拓扑为准。没有发现 I/O error 只能说明已采集日志中没有直接证据，不能据此断言硬件完全健康。</p>
+<h2 id="section-12">检查内存和平台稳定性</h2>
+<p>在维护窗口通过 Memtest86+、MemTest86 或服务器厂商诊断工具进行完整内存测试。至少完成一个完整 Pass；只要出现非零错误，就不能忽略。</p>
+<p>同时检查：</p>
+<ul class="article-list">
+<li class="list-depth-0">BMC SEL 中的 ECC、PCIe、掉电、温度和电源告警。</li>
+<li class="list-depth-0">内核 EDAC/MCE/RAS 日志。</li>
+<li class="list-depth-0">NVMe、BIOS、BMC 和主板固件的已知问题与兼容性。</li>
+<li class="list-depth-0">设备温度、插槽接触、背板、线缆和双路电源状态。</li>
+</ul>
+<p>如果错误只在特定内核或驱动版本下复现，还需要把软件回归纳入调查，不能把所有重复损坏都简单归因于 SSD。</p>
+<h2 id="section-13">文件系统正常后排查 systemd 和图形界面</h2>
+<p>当 EXT4 已通过检查、根文件系统能够稳定挂载，但系统仍卡在图形启动阶段时，可以在 GRUB 内核参数末尾临时追加：</p>
+<pre><code class="language-text">systemd.unit=multi-user.target</code></pre>
+<p>进入纯命令行目标后执行：</p>
+<pre><code class="language-bash">systemctl --failed --no-pager
+systemctl get-default
+systemctl status gdm --no-pager -l
+systemctl status graphical.target --no-pager -l
+journalctl -b -p err..alert --no-pager</code></pre>
+<p>对于 generator 返回 <code>127</code> 的问题，检查文件是否存在、解释器和依赖是否完整，以及它属于哪个软件包：</p>
+<pre><code class="language-bash">file /usr/lib/systemd/system-generators/REPLACE_WITH_GENERATOR
+rpm -qf /usr/lib/systemd/system-generators/REPLACE_WITH_GENERATOR</code></pre>
+<p>对于服务单元中的 URL 或语法错误，使用实际服务名检查：</p>
+<pre><code class="language-bash">systemctl cat REPLACE_WITH_APPLICATION_SERVICE.service
+systemd-analyze verify /etc/systemd/system/REPLACE_WITH_APPLICATION_SERVICE.service</code></pre>
+<p>这里的尖括号表示占位符，执行前必须替换。不要因为单个非关键服务失败就反复修改根文件系统；先确认它是否处于启动关键路径。</p>
+<h2 id="section-14">推荐处置流程</h2>
+<pre><code class="language-text">确认根设备、映射层和文件系统类型
+        ↓
+确认 EXT4 未挂载
+        ↓
+保存元数据镜像与现场日志
+        ↓
+e2fsck -f -n 只读评估
+        ↓
+e2fsck -p 受控修复
+        ↓
+再次只读检查并解释返回码
+        ↓
+重启并验证系统、软件包和业务数据
+        ↓
+若短时间内再次损坏，停止反复 fsck
+        ↓
+保护数据，排查 NVMe / 内存 / PCIe / 供电 / 内核驱动
+        ↓
+若文件系统稳定但图形界面失败，再排查 systemd / GDM</code></pre>
+<h2 id="section-15">关键结论</h2>
+<ul class="article-list">
+<li class="list-depth-0">首次无法挂载 <code>/sysroot</code> 的直接原因是根 EXT4 文件系统存在未修复错误。</li>
+<li class="list-depth-0">文件系统损坏是一项现场事实，但它本身不等同于底层根因。</li>
+<li class="list-depth-0"><code>e2fsck</code> 保证的是元数据一致性，不保证文件内容和业务数据完整。</li>
+<li class="list-depth-0">修复后迅速复发是重要证据，应优先排查持续破坏写入的硬件或软件链路。</li>
+<li class="list-depth-0">SMART 没有明显错误不能排除内存、PCIe、供电、固件和间歇性设备问题。</li>
+<li class="list-depth-0">systemd generator、GDM 或应用配置问题应在文件系统稳定后分层处理。</li>
+</ul>
+<h2 id="section-16">参考资料</h2>
+<ul class="article-list">
+<li class="list-depth-0"><a href="https://mirrors.openanolis.cn/anolis/8.10/" target="_blank" rel="noreferrer">Anolis OS 8.10 官方镜像目录</a></li>
+<li class="list-depth-0"><a href="https://man7.org/linux/man-pages/man8/e2fsck.8.html" target="_blank" rel="noreferrer">e2fsck(8) 官方手册页</a></li>
+<li class="list-depth-0"><a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/8/html-single/managing_file_systems/index" target="_blank" rel="noreferrer">Red Hat Enterprise Linux 8：检查与修复文件系统</a></li>
+<li class="list-depth-0"><a href="https://man7.org/linux/man-pages/man7/dracut.cmdline.7.html" target="_blank" rel="noreferrer">dracut.cmdline(7)：rd.break 启动断点</a></li>
+</ul>
+          <div class="article-end">本文由 Yalex 的工作笔记整理而成。如用于生产环境，请先在测试环境验证并准备回滚方案。</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><p>© <span id="current-year">2026</span> Yalex.</p><a href="#article">回到顶部 ↑</a></div></footer>
+  </body>
+</html>
