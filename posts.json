@@ -1,5 +1,15 @@
 [
   {
+    "title": "ProxySQL + MySQL 读写分离与安全故障切换实战",
+    "slug": "proxysql-mysql-rw-split-safe-failover",
+    "category": "MySQL",
+    "summary": "围绕统一数据库入口，整理事务安全路由、主从识别、Reader 摘除、主库防脑裂切换与 ProxySQL 高可用。",
+    "tags": [
+      "ProxySQL",
+      "故障切换"
+    ]
+  },
+  {
     "title": "Anolis OS 8.10 启动失败：EXT4 修复与硬件排查",
     "slug": "anolisos-8-10-ext4-boot-recovery",
     "category": "Linux",

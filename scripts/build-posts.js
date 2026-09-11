@@ -6,10 +6,17 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260911-anolis-1';
+const assetVersion = '20260911-proxysql-2';
 
 // 默认发布规则：除非另有排序要求，新同步的文章插入列表第一位。
 const posts = [
+  {
+    sourceTitle: 'ProxySQL + MySQL 读写分离、故障切换与运维实战',
+    title: 'ProxySQL + MySQL 读写分离与安全故障切换实战',
+    slug: 'proxysql-mysql-rw-split-safe-failover', category: 'MySQL', symbol: 'PXY',
+    summary: '围绕统一数据库入口，整理事务安全路由、主从识别、Reader 摘除、主库防脑裂切换与 ProxySQL 高可用。',
+    tags: ['ProxySQL', '故障切换']
+  },
   {
     sourceTitle: 'Anolis OS 8.10 启动故障修复排障记录',
     title: 'Anolis OS 8.10 启动失败：EXT4 修复与硬件排查',
