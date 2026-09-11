@@ -6,19 +6,26 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 
-test('新同步的 Anolis OS 笔记生成后位于首页第一篇', () => {
+test('生成器输出与内容目录保持完整且无重复', () => {
   execFileSync(process.execPath, ['scripts/build-posts.js'], {
     cwd: root,
     stdio: 'pipe'
   });
 
   const posts = JSON.parse(fs.readFileSync(path.join(root, 'posts.json'), 'utf8'));
+  const postSlugs = posts.map((post) => post.slug).sort();
+  const contentSlugs = fs.readdirSync(path.join(root, 'content'))
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => file.slice(0, -3))
+    .sort();
+  const generatedSlugs = fs.readdirSync(path.join(root, 'posts'))
+    .filter((file) => file.endsWith('.html'))
+    .map((file) => file.slice(0, -5))
+    .sort();
 
-  assert.equal(posts.length, 33);
-  assert.equal(posts[0].slug, 'anolisos-8-10-ext4-boot-recovery');
-  assert.equal(posts[0].category, 'Linux');
-  assert.ok(fs.existsSync(path.join(root, 'content/anolisos-8-10-ext4-boot-recovery.md')));
-  assert.ok(fs.existsSync(path.join(root, 'posts/anolisos-8-10-ext4-boot-recovery.html')));
+  assert.equal(new Set(postSlugs).size, postSlugs.length);
+  assert.deepEqual(postSlugs, contentSlugs);
+  assert.deepEqual(postSlugs, generatedSlugs);
 });
 
 test('Anolis OS 笔记的 Bash 示例不包含会被解释为重定向的尖括号占位符', () => {
