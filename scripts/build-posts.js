@@ -6,10 +6,24 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const contentDir = path.join(root, 'content');
 const postsDir = path.join(root, 'posts');
-const assetVersion = '20260911-proxysql-2';
+const assetVersion = '20261113-es-maven-1';
 
 // 默认发布规则：除非另有排序要求，新同步的文章插入列表第一位。
 const posts = [
+  {
+    sourceTitle: 'ES / Kibana 修复记录',
+    title: 'Elasticsearch Translog 损坏：离线修复与 Kibana 恢复复盘',
+    slug: 'elasticsearch-translog-corruption-recovery', category: 'Elasticsearch', symbol: 'ES',
+    summary: '复盘 Kibana 系统索引 translog 损坏后的停服取证、离线备份、定向清理、旧主分片强制分配与恢复验收。',
+    tags: ['Translog', '分片恢复']
+  },
+  {
+    sourceTitle: 'Maven 构建失败排查：本地元数据变成 0 字节，导致 RELEASE 依赖无法解析',
+    title: 'Maven 本地元数据损坏导致依赖解析失败：排查与恢复',
+    slug: 'maven-empty-metadata-build-failure', category: '工具方法', symbol: 'MVN',
+    summary: '从 RELEASE 动态版本与 0 字节仓库元数据入手，定位多模块构建失败，并用定向备份刷新恢复缓存。',
+    tags: ['Maven', '构建故障']
+  },
   {
     sourceTitle: 'ProxySQL + MySQL 读写分离、故障切换与运维实战',
     title: 'ProxySQL + MySQL 读写分离与安全故障切换实战',
